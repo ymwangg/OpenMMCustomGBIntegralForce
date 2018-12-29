@@ -10,6 +10,7 @@ class CharmmReferenceGBSW{
         void computeBornRadii(const std::vector<OpenMM::Vec3>& atomCoordinates,
                 const std::vector<double>& partialCharges, std::vector<double>& bornRadii);
         double computeVolume(const std::vector<OpenMM::Vec3>& atomCoordinates, const OpenMM::Vec3& quadCoordinate, const double switchDistance);
+        void compute_dbornR_dr_vec(const std::vector<OpenMM::Vec3>& atomCoordinates, const int atomI, const double prefactor, const OpenMM::Vec3& quadCoordinate, const double volumeI, const double switchDistance);
 
         void setAtomicRadii(const std::vector<double>& atomicRadii);
         const std::vector<double>& getAtomicRadii() const;
@@ -34,6 +35,8 @@ class CharmmReferenceGBSW{
     private:
         std::vector<double> _atomicRadii;
         std::vector<double> _scaledRadiusFactors;
+        std::vector<std::vector<OpenMM::Vec3 > > _dbornR_dr_vec;
+        std::vector<double> _dG_dbornR;
         int _numberOfAtoms;
         double _solventDielectric;
         double _soluteDielectric;

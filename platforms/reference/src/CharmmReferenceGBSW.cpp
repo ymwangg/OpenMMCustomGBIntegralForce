@@ -18,6 +18,8 @@ using namespace::std;
 CharmmReferenceGBSW::CharmmReferenceGBSW(int numberOfAtoms){
     _atomicRadii.resize(numberOfAtoms);
     _scaledRadiusFactors.resize(numberOfAtoms);
+    _dbornR_dr_vec.resize(numberOfAtoms,std::vector<OpenMM::Vec3>(numberOfAtoms));
+    _dG_dbornR.resize(numberOfAtoms);
     _numberOfAtoms = numberOfAtoms;
     _electricConstant = -0.5*ONE_4PI_EPS0;
 }
@@ -125,10 +127,10 @@ double CharmmReferenceGBSW::computeEnergyForces(const vector<Vec3>& atomCoordina
     const double soluteDielectric = _soluteDielectric;
     const double cutoffDistance = _cutoffDistance;
     const double electricConstant = _electricConstant;
-    double prefactor = 2*electricConstant*(1.0/soluteDielectric - 1.0/solventDielectric); //332*(1.0/1-1.0/80)
+    double prefactor = 2*electricConstant*(1.0/soluteDielectric - 1.0/solventDielectric); //-332*(1.0/1-1.0/80)
     prefactor = 2*electricConstant*(1.0 - 1.0/80);
-    cout<<solventDielectric<<endl;
-    cout<<soluteDielectric<<endl;
+    //cout<<solventDielectric<<endl;
+    //cout<<soluteDielectric<<endl;
     //cout<<electricConstant<<endl;
     /*
     cout<<_numberOfAtoms<<endl;
@@ -136,29 +138,33 @@ double CharmmReferenceGBSW::computeEnergyForces(const vector<Vec3>& atomCoordina
     */
     //cout<<electricConstant<<endl;
     //cout<<_cutoffDistance<<endl;
-    //bornRadii.resize(_numberOfAtoms);
+    /*
     std::vector<double> bornRadii = {
-             2.0671048866705033  ,  
-             1.6708247223794475  ,   
-             1.2111449624361177  ,   
-             1.2090743225808722  ,   
-             2.5582359782382080  ,   
-             1.7701566227630932  ,   
-             2.4436070788266764  ,   
-             1.6112295349242343  ,   
-             1.7682060825888346  ,   
-             2.3825455446487065  ,   
-             1.4885826414553700  ,   
-             1.7293822223394433  ,   
-             2.4343525600508422  ,   
-             1.8752450803679326  ,   
-             2.2825091233422956  ,   
-             1.1201204725992946  ,   
-             1.0305836162730180  ,   
-             2.2498345141236533  ,   
-             1.1752458648052326  ,   
-             1.1789050022567080 };
+        0.241532,
+        0.195838,
+        0.158818,
+        0.158351,
+        0.303748,
+        0.223532,
+        0.297326,
+        0.211035,
+        0.212215,
+        0.259904,
+        0.189517,
+        0.182483,
+        0.248971,
+        0.181756,
+        0.254480,
+        0.132924,
+        0.131805,
+        0.243577,
+        0.173051,
+        0.178189+1e-6
+    };*/ 
+    std::vector<double> bornRadii;
+    bornRadii.resize(numberOfAtoms);
     computeBornRadii(atomCoordinates, partialCharges, bornRadii);
+    _dG_dbornR.resize(numberOfAtoms,0.0);
     for (int atomI = 0; atomI < numberOfAtoms; atomI++){
         for (int atomJ = atomI; atomJ < numberOfAtoms; atomJ++){
             double deltaR[ReferenceForce::LastDeltaRIndex];
@@ -166,24 +172,56 @@ double CharmmReferenceGBSW::computeEnergyForces(const vector<Vec3>& atomCoordina
                 ReferenceForce::getDeltaRPeriodic(atomCoordinates[atomI], atomCoordinates[atomJ], getPeriodicBox(), deltaR);
             else
                 ReferenceForce::getDeltaR(atomCoordinates[atomI], atomCoordinates[atomJ], deltaR);
-            double r = deltaR[ReferenceForce::RIndex];
-            /*
             if (getUseCutoff() && deltaR[ReferenceForce::RIndex] > cutoffDistance)
                 continue;
-            */
-            double Qi = partialCharges[atomI];
-            double Qj = partialCharges[atomJ];
-            double Ri = bornRadii[atomI];
-            double Rj = bornRadii[atomJ];
-            double fij = sqrt(r*r + Ri*Rj*exp(-r*r/(4*Ri*Rj)));
-            double e = prefactor*Qi*Qj/fij;
-            if(atomI!=atomJ){
-                energy += e;
+            double r_ij = deltaR[ReferenceForce::RIndex];
+            //compute energy
+            double q_i = partialCharges[atomI];
+            double q_j = partialCharges[atomJ];
+            double R_i = bornRadii[atomI];
+            double R_j = bornRadii[atomJ];
+            double D_ij = (r_ij*r_ij) / (4.0*R_i*R_j);
+            double f_ij = sqrt(r_ij*r_ij + R_i*R_j*exp(-D_ij));
+            double e_ij = prefactor * q_i * q_j / f_ij;
+            if(atomI!=atomJ) 
+                energy += e_ij;
+            else 
+                energy += 0.5*e_ij;
+
+            //compute dG_dr force
+            double dG_dr_part1 = q_i * q_j * (4.0-exp(-D_ij));
+            double dG_dr = -0.25 * prefactor * dG_dr_part1 / pow(f_ij,3);
+            OpenMM::Vec3 rij_vec(deltaR[ReferenceForce::XIndex],deltaR[ReferenceForce::YIndex],
+                    deltaR[ReferenceForce::ZIndex]);
+            OpenMM::Vec3 force1_ij = (-rij_vec) * (-dG_dr);
+            inputForces[atomI] += force1_ij;
+            inputForces[atomJ] -= force1_ij;
+
+            //compute dG_dR
+            if(atomI==atomJ){
+                _dG_dbornR[atomI] += -0.5 * prefactor * q_i * q_j / (R_i*R_i);
+            }else{
+                double dG_dR_part1 = q_i*q_j*exp(-D_ij);
+                double dG_dR_part2 = pow(f_ij,3);
+                double common_part = -0.5 * prefactor * (dG_dR_part1/dG_dR_part2);
+                double dG_dRi = common_part * (R_j + (r_ij*r_ij)/(4.0*R_i));
+                double dG_dRj = common_part * (R_i + (r_ij*r_ij)/(4.0*R_j));
+                _dG_dbornR[atomI] += dG_dRi;
+                _dG_dbornR[atomJ] += dG_dRj;
             }
-            else{
-                energy += 0.5*e;
-                //cout<<atomI<<" "<<0.5*e*OpenMM::KcalPerKJ<<endl;
-            }
+        }
+        //compute dG_dR*dR_dr force
+        for (int atomJ = 0; atomJ < numberOfAtoms; atomJ++){
+            double deltaR[ReferenceForce::LastDeltaRIndex];
+            if (getPeriodic())
+                ReferenceForce::getDeltaRPeriodic(atomCoordinates[atomI], atomCoordinates[atomJ], getPeriodicBox(), deltaR);
+            else
+                ReferenceForce::getDeltaR(atomCoordinates[atomI], atomCoordinates[atomJ], deltaR);
+            if (getUseCutoff() && deltaR[ReferenceForce::RIndex] > cutoffDistance)
+                continue;
+            double dG_dRi = _dG_dbornR[atomI];
+            OpenMM::Vec3 force2_j = _dbornR_dr_vec[atomI][atomJ] * (-dG_dRi);
+            inputForces[atomJ] += force2_j;
         }
     }
 
@@ -232,6 +270,7 @@ void CharmmReferenceGBSW::computeBornRadii(const std::vector<OpenMM::Vec3>& atom
        cout<<q[0]<<" "<<q[1]<<" "<<q[2]<<" "<<q[3]<<endl;
        }*/
     vector<vector<double> > quad(radialQuad.size()*sphericalQuad.size(), vector<double>(5,0.0));
+    _dbornR_dr_vec.resize(_numberOfAtoms,std::vector<OpenMM::Vec3>(_numberOfAtoms));
     for(int i=0; i<radialQuad.size(); ++i){
         for(int j=0; j<sphericalQuad.size(); ++j){
             double r = radialQuad[i][0];
@@ -248,12 +287,14 @@ void CharmmReferenceGBSW::computeBornRadii(const std::vector<OpenMM::Vec3>& atom
     //Ri^(-1) = alpha0*(1/eta_i  - 1/(4*PI) * Int_{eta}^{Inf} {V(r)/(r-ri)^4 * dxdydz} + 
     //alpha1*(1/(4*eta_i^4)  - 1/(4*PI) * Int_{eta}^{Inf} {V(r)/(r-ri)^7 * dxdydz})^(1/4)
     for(int atomI=0; atomI<_numberOfAtoms; ++atomI){
+        //compute Born Radius
         OpenMM::Vec3 atomICoordinate = atomCoordinates[atomI];
         double charge = partialCharges[atomI];
         double vdwR = _atomicRadii[atomI];
         double eta = r0;
         double integral1 = 0.0;
         double integral2 = 0.0;
+        vector<double> Volume(quad.size());
         for(int i=0; i<quad.size(); ++i){
             OpenMM::Vec3 rQuad;
             rQuad[0] = atomICoordinate[0]+quad[i][0];
@@ -261,17 +302,33 @@ void CharmmReferenceGBSW::computeBornRadii(const std::vector<OpenMM::Vec3>& atom
             rQuad[2] = atomICoordinate[2]+quad[i][2];
             double radius = quad[i][3];
             double weight = quad[i][4];
-            if(abs(radius-0.0)<1e-6)
+            if(radius == 0)
                 continue;
-            double molecularVolume = 1.0 - computeVolume(atomCoordinates, rQuad, switchDistance);
+            Volume[i] = computeVolume(atomCoordinates, rQuad, switchDistance);
+            double molecularVolume = 1.0 - Volume[i];
             integral1 += weight * molecularVolume/(radius*radius);
             integral2 += weight * molecularVolume/pow(radius,5);
         }
         double inverseBornRi = alpha0*(1.0/eta - integral1) + 
-            alpha1*pow((1.0/abs(4.0*pow(eta,4)) - integral2), 1.0/4.0);
+            alpha1*pow((1.0/(4.0*pow(eta,4)) - integral2), 1.0/4.0);
         bornRadii[atomI] = 1.0/inverseBornRi;
         //cout<<bornRadii[atomI]<<endl;
         //cout<<integral1<<" "<<integral2<<endl;
+        //compute dRBorn_dr
+        for(int i=0; i<quad.size(); ++i){
+            OpenMM::Vec3 rQuad;
+            rQuad[0] = atomICoordinate[0]+quad[i][0];
+            rQuad[1] = atomICoordinate[1]+quad[i][1];
+            rQuad[2] = atomICoordinate[2]+quad[i][2];
+            double radius = quad[i][3];
+            double weight = quad[i][4];
+            if(radius == 0)
+                continue;
+            double part1 = alpha0/(radius*radius);
+            double part2 = (1.0/4.0)*alpha1*pow((1.0/(4.0*pow(eta,4))-integral2),-3.0/4.0)/pow(radius,5);
+            double prefactor = (bornRadii[atomI]*bornRadii[atomI])*weight*(part1+part2);
+            compute_dbornR_dr_vec(atomCoordinates, atomI, prefactor, rQuad, Volume[i], switchDistance);
+        }
     }
     return;
 }
@@ -296,4 +353,34 @@ double CharmmReferenceGBSW::computeVolume(const std::vector<OpenMM::Vec3>& atomC
         }
     } 
     return V;
+}
+
+void CharmmReferenceGBSW::compute_dbornR_dr_vec(const std::vector<OpenMM::Vec3>& atomCoordinates, const int atomI, const double prefactor, const OpenMM::Vec3& quadCoordinate, const double volumeI, const double switchDistance){
+    //_dbornR_dr_vec;
+    if(volumeI==0) return;
+    for(int atomK=0; atomK<_numberOfAtoms; ++atomK){
+        if(atomI==atomK) continue;
+        double deltaRik[ReferenceForce::LastDeltaRIndex];
+        if (_periodic)
+            ReferenceForce::getDeltaRPeriodic(quadCoordinate, atomCoordinates[atomK], _periodicBoxVectors, deltaRik);
+        else
+            ReferenceForce::getDeltaR(quadCoordinate, atomCoordinates[atomK], deltaRik);
+        double rik = deltaRik[ReferenceForce::RIndex];
+        double Rk = (_atomicRadii[atomK]+0.03)*0.9520;
+        double uk;
+        double duk_dri;
+        if(rik>Rk-switchDistance && rik<Rk+switchDistance){
+            uk = 0.5 + 3.0/(4.0*switchDistance) * (rik-Rk) - 1.0/(4.0*pow(switchDistance,3)) * pow(rik-Rk,3);
+            duk_dri = (3.0/(4.0*switchDistance) - 3.0/(4.0*pow(switchDistance,3))*(rik-Rk)*(rik-Rk));
+        }else{
+            continue;
+        }
+        OpenMM::Vec3 rik_vec(deltaRik[ReferenceForce::XIndex],deltaRik[ReferenceForce::YIndex],
+                deltaRik[ReferenceForce::ZIndex]);
+        rik_vec = rik_vec / rik;
+        OpenMM::Vec3 dRi_dri = rik_vec*(prefactor*(duk_dri*volumeI/uk));
+        _dbornR_dr_vec[atomI][atomI] += dRi_dri;
+        _dbornR_dr_vec[atomI][atomK] -= dRi_dri;
+    }
+    return;
 }
