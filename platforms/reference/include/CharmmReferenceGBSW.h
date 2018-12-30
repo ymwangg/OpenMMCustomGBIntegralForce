@@ -25,6 +25,8 @@ class CharmmReferenceGBSW{
         double getSoluteDielectric() const;
 
         void setUseCutoff(double distance);
+        void setNeighborList(OpenMM::NeighborList* neighborList);
+        OpenMM::NeighborList* getNeighborList();
         bool getUseCutoff() const;
         double getCutoffDistance() const;
 
@@ -33,15 +35,19 @@ class CharmmReferenceGBSW{
         const OpenMM::Vec3* getPeriodicBox();
 
     private:
+        OpenMM::NeighborList* _neighborList;
         std::vector<double> _atomicRadii;
         std::vector<double> _scaledRadiusFactors;
         std::vector<std::vector<OpenMM::Vec3 > > _dbornR_dr_vec;
         std::vector<double> _dG_dbornR;
+        std::vector<std::vector<double> > _quad;
         int _numberOfAtoms;
         double _solventDielectric;
         double _soluteDielectric;
         double _cutoffDistance;
         double _electricConstant;
+        double _r0;
+        double _r1;
         OpenMM::Vec3 _periodicBoxVectors[3];
         bool _cutoff;
         bool _periodic;

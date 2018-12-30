@@ -24,6 +24,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.      *
  * -------------------------------------------------------------------------- */
 
+#include "ReferenceNeighborList.h"
 #include "CharmmReferenceKernels.h"
 #include "CharmmReferenceGBSW.h"
 #include "ReferenceObc.h"
@@ -148,16 +149,28 @@ void ReferenceCalcCharmmGBSWForceKernel::initialize(const System& system, const 
     gbsw->setScaledRadiusFactors(scaleFactors);
     gbsw->setSolventDielectric(force.getSolventDielectric());
     gbsw->setSoluteDielectric(force.getSoluteDielectric());
-    if (force.getNonbondedMethod() != CharmmGBSWForce::NoCutoff)
+    if (force.getNonbondedMethod() != CharmmGBSWForce::NoCutoff){
+        OpenMM::NeighborList* neighborList = new NeighborList();
         gbsw->setUseCutoff(force.getCutoffDistance());
+        gbsw->setNeighborList(neighborList);
+    }
+    else 
+    {
+        OpenMM::NeighborList* neighborList = gbsw->getNeighborList();
+        neighborList = NULL;
+    }
     isPeriodic = (force.getNonbondedMethod() == CharmmGBSWForce::CutoffPeriodic);
 }
 
 double ReferenceCalcCharmmGBSWForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
     vector<Vec3>& posData = extractPositions(context);
     vector<Vec3>& forceData = extractForces(context);
-    if (isPeriodic)
+    if (gbsw->getPeriodic())
         gbsw->setPeriodic(extractBoxVectors(context));
+    if (gbsw->getUseCutoff()) {
+        vector<set<int> > empty(context.getSystem().getNumParticles()); // Don't omit exclusions from the neighbor list
+        computeNeighborListVoxelHash(*gbsw->getNeighborList(), context.getSystem().getNumParticles(), posData, empty, extractBoxVectors(context), gbsw->getUseCutoff(), gbsw->getCutoffDistance(), 0.0);
+    }
     return gbsw->computeEnergyForces(posData, charges, forceData);
 }
 
