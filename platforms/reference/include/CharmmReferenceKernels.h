@@ -35,7 +35,7 @@
 
 namespace OpenMM {
 
-class ReferenceObc;
+class CharmmReferenceGBMV;
 class CharmmReferenceGBSW;
 /**
  * This kernel is invoked by CharmmGBMVForce to calculate the forces acting on the system.
@@ -69,9 +69,8 @@ public:
      */
     void copyParametersToContext(ContextImpl& context, const CharmmGBMVForce& force);
 private:
-    ReferenceObc* obc; 
+    CharmmReferenceGBMV* gbmv;
     std::vector<double> charges;
-    bool isPeriodic;
 };
 
 /**

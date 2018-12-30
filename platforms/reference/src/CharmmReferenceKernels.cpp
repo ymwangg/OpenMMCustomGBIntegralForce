@@ -26,11 +26,13 @@
 
 #include "ReferenceNeighborList.h"
 #include "CharmmReferenceKernels.h"
+#include "CharmmReferenceGBMV.h"
 #include "CharmmReferenceGBSW.h"
 #include "ReferenceObc.h"
 #include "ReferencePlatform.h"
 #include "openmm/internal/ContextImpl.h"
 #include "openmm/OpenMMException.h"
+#include <iostream>
 
 #include <cmath>
 #ifdef _MSC_VER
@@ -68,10 +70,7 @@ static Vec3* extractBoxVectors(ContextImpl& context) {
 // ***************************************************************************
 
 ReferenceCalcCharmmGBMVForceKernel::~ReferenceCalcCharmmGBMVForceKernel() {
-    if (obc) {
-        delete obc->getObcParameters();
-        delete obc; 
-    }    
+    if(gbmv) delete gbmv;
 }
 
 void ReferenceCalcCharmmGBMVForceKernel::initialize(const System& system, const CharmmGBMVForce& force) {
@@ -86,31 +85,42 @@ void ReferenceCalcCharmmGBMVForceKernel::initialize(const System& system, const 
         atomicRadii[i] = radius;
         scaleFactors[i] = scalingFactor;
     }    
-    ObcParameters* obcParameters = new ObcParameters(numParticles, ObcParameters::ObcTypeII);
-    obcParameters->setAtomicRadii(atomicRadii);
-    obcParameters->setScaledRadiusFactors(scaleFactors);
-    obcParameters->setSolventDielectric(force.getSolventDielectric());
-    obcParameters->setSoluteDielectric(force.getSoluteDielectric());
-    obcParameters->setPi4Asolv(4*M_PI*force.getSurfaceAreaEnergy());
-    if (force.getNonbondedMethod() != CharmmGBMVForce::NoCutoff)
-        obcParameters->setUseCutoff(force.getCutoffDistance());
-    isPeriodic = (force.getNonbondedMethod() == CharmmGBMVForce::CutoffPeriodic);
-    obc = new ReferenceObc(obcParameters);
-    obc->setIncludeAceApproximation(true);
+    gbmv = new CharmmReferenceGBMV(numParticles);
+    gbmv->setAtomicRadii(atomicRadii);
+    gbmv->setScaledRadiusFactors(scaleFactors);
+    gbmv->setSolventDielectric(force.getSolventDielectric());
+    gbmv->setSoluteDielectric(force.getSoluteDielectric());
+    if (force.getNonbondedMethod() != CharmmGBMVForce::NoCutoff){
+        OpenMM::NeighborList* neighborList = new NeighborList();
+        gbmv->setUseCutoff(force.getCutoffDistance());
+        gbmv->setNeighborList(*neighborList);
+        if(force.getNonbondedMethod() == CharmmGBSWForce::CutoffPeriodic)
+            gbmv->setPeriodic();
+    }
+    else {
+        OpenMM::NeighborList* neighborList = NULL;
+        gbmv->setNeighborList(*neighborList);
+        gbmv->setNoCutoff();
+        gbmv->setNoPeriodic();
+    }
 }
 
 double ReferenceCalcCharmmGBMVForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
     vector<Vec3>& posData = extractPositions(context);
     vector<Vec3>& forceData = extractForces(context);
-    if (isPeriodic)
-        obc->getObcParameters()->setPeriodic(extractBoxVectors(context));
-    return obc->computeBornEnergyForces(posData, charges, forceData);
+    if (gbmv->getUseCutoff() && gbmv->getPeriodic())
+        gbmv->setPeriodic(extractBoxVectors(context));
+    if (gbmv->getUseCutoff()) {
+        vector<set<int> > empty(context.getSystem().getNumParticles()); // Don't omit exclusions from the neighbor list
+        OpenMM::NeighborList* neighborList = gbmv->getNeighborList();
+        computeNeighborListVoxelHash(*neighborList, context.getSystem().getNumParticles(), posData, empty, extractBoxVectors(context), gbmv->getPeriodic(), gbmv->getCutoffDistance(), 0.0);
+    }
+    return gbmv->computeEnergyForces(posData, charges, forceData);
 }
 
 void ReferenceCalcCharmmGBMVForceKernel::copyParametersToContext(ContextImpl& context, const CharmmGBMVForce& force) {
     int numParticles = force.getNumParticles();
-    ObcParameters* obcParameters = obc->getObcParameters();
-    if (numParticles != obcParameters->getAtomicRadii().size())
+    if (numParticles != gbmv->getAtomicRadii().size())
         throw OpenMMException("updateParametersInContext: The number of particles has changed");
 
     // Record the values.
@@ -124,12 +134,14 @@ void ReferenceCalcCharmmGBMVForceKernel::copyParametersToContext(ContextImpl& co
         atomicRadii[i] = radius;
         scaleFactors[i] = scalingFactor;
     }
-    obcParameters->setAtomicRadii(atomicRadii);
-    obcParameters->setScaledRadiusFactors(scaleFactors);
+    gbmv->setAtomicRadii(atomicRadii);
+    gbmv->setScaledRadiusFactors(scaleFactors);
+    return;
 }
 
 // ***************************************************************************
 ReferenceCalcCharmmGBSWForceKernel::~ReferenceCalcCharmmGBSWForceKernel() {
+    if(gbsw) delete gbsw;
 }
 
 void ReferenceCalcCharmmGBSWForceKernel::initialize(const System& system, const CharmmGBSWForce& force) {
@@ -152,24 +164,28 @@ void ReferenceCalcCharmmGBSWForceKernel::initialize(const System& system, const 
     if (force.getNonbondedMethod() != CharmmGBSWForce::NoCutoff){
         OpenMM::NeighborList* neighborList = new NeighborList();
         gbsw->setUseCutoff(force.getCutoffDistance());
-        gbsw->setNeighborList(neighborList);
+        gbsw->setNeighborList(*neighborList);
+        if(force.getNonbondedMethod() == CharmmGBSWForce::CutoffPeriodic)
+            gbsw->setPeriodic();
     }
-    else 
-    {
-        OpenMM::NeighborList* neighborList = gbsw->getNeighborList();
-        neighborList = NULL;
+    else {
+        OpenMM::NeighborList* neighborList = NULL;
+        gbsw->setNeighborList(*neighborList);
+        gbsw->setNoCutoff();
+        gbsw->setNoPeriodic();
     }
-    isPeriodic = (force.getNonbondedMethod() == CharmmGBSWForce::CutoffPeriodic);
+    return;
 }
 
 double ReferenceCalcCharmmGBSWForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
     vector<Vec3>& posData = extractPositions(context);
     vector<Vec3>& forceData = extractForces(context);
-    if (gbsw->getPeriodic())
+    if (gbsw->getUseCutoff() && gbsw->getPeriodic())
         gbsw->setPeriodic(extractBoxVectors(context));
     if (gbsw->getUseCutoff()) {
         vector<set<int> > empty(context.getSystem().getNumParticles()); // Don't omit exclusions from the neighbor list
-        computeNeighborListVoxelHash(*gbsw->getNeighborList(), context.getSystem().getNumParticles(), posData, empty, extractBoxVectors(context), gbsw->getUseCutoff(), gbsw->getCutoffDistance(), 0.0);
+        OpenMM::NeighborList* neighborList = gbsw->getNeighborList();
+        computeNeighborListVoxelHash(*neighborList, context.getSystem().getNumParticles(), posData, empty, extractBoxVectors(context), gbsw->getPeriodic(), gbsw->getCutoffDistance(), 0.0);
     }
     return gbsw->computeEnergyForces(posData, charges, forceData);
 }
@@ -192,5 +208,6 @@ void ReferenceCalcCharmmGBSWForceKernel::copyParametersToContext(ContextImpl& co
     }
     gbsw->setAtomicRadii(atomicRadii);
     gbsw->setScaledRadiusFactors(scaleFactors);
+    return;
 }
 

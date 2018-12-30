@@ -30,13 +30,6 @@ CharmmReferenceGBSW::CharmmReferenceGBSW(int numberOfAtoms){
     int ruleLebedev = 4;
     vector<vector<double> > radialQuad = CharmmQuadrature::GaussLegendre(_r0, _r1, nRadialPoints);
     vector<vector<double> > sphericalQuad = CharmmQuadrature::Lebedev(ruleLebedev);
-    /*
-       for(auto &q : radialQuad){
-       cout<<q[0]<<" "<<q[1]<<endl;
-       }
-       for(auto &q : sphericalQuad){
-       cout<<q[0]<<" "<<q[1]<<" "<<q[2]<<" "<<q[3]<<endl;
-       }*/
     _quad.resize(radialQuad.size()*sphericalQuad.size(), vector<double>(5,0.0));
     for(int i=0; i<radialQuad.size(); ++i){
         for(int j=0; j<sphericalQuad.size(); ++j){
@@ -51,13 +44,18 @@ CharmmReferenceGBSW::CharmmReferenceGBSW(int numberOfAtoms){
             _quad[idx][4] = w_r*w_s;
         }
     }
+    _lookupTableBufferLength = 0.20; //0.20 nm
+    _switchingDistance = 0.03; //0.03 nm
+    _lookupTableGridLength = 0.15; //0.15 nm
+    _periodic = false;
+    _cutoff = false;
 }
 
 CharmmReferenceGBSW::~CharmmReferenceGBSW() {
 }
 
-void CharmmReferenceGBSW::setNeighborList(OpenMM::NeighborList* neighborList){
-    _neighborList = neighborList;
+void CharmmReferenceGBSW::setNeighborList(OpenMM::NeighborList& neighborList){
+    _neighborList = &neighborList;
 }
 
 OpenMM::NeighborList* CharmmReferenceGBSW::getNeighborList(){
@@ -126,6 +124,18 @@ void CharmmReferenceGBSW::setUseCutoff(double distance) {
      _cutoffDistance = distance;
 }
 
+void CharmmReferenceGBSW::setNoCutoff(){
+    _cutoff = false;
+}
+
+void CharmmReferenceGBSW::setNoPeriodic(){
+    _periodic = false;
+}
+
+void CharmmReferenceGBSW::setPeriodic(){
+    _periodic = true;
+}
+
 bool CharmmReferenceGBSW::getUseCutoff() const {
      return _cutoff;
 }
@@ -176,6 +186,7 @@ double CharmmReferenceGBSW::computeEnergyForces(const vector<Vec3>& atomCoordina
     //cout<<electricConstant<<endl;
     //cout<<_cutoffDistance<<endl;
     std::vector<std::vector<int>> neighborMatrix;
+    neighborMatrix.clear();
     neighborMatrix.resize(numberOfAtoms, vector<int>());
     //use cutoff
     if(_cutoff){
@@ -209,6 +220,8 @@ double CharmmReferenceGBSW::computeEnergyForces(const vector<Vec3>& atomCoordina
         }
         cout<<endl;
     }*/
+    computeLookupTable(atomCoordinates);
+
     /*
     std::vector<double> bornRadii = {
         0.241532,0.195838,0.158818,0.158351,0.303748,0.223532,0.297326,
@@ -217,8 +230,10 @@ double CharmmReferenceGBSW::computeEnergyForces(const vector<Vec3>& atomCoordina
         */
     std::vector<double> bornRadii;
     bornRadii.resize(numberOfAtoms);
-    computeBornRadii(atomCoordinates, partialCharges, bornRadii);
+    //computeBornRadii(atomCoordinates, partialCharges, bornRadii);
+    computeBornRadiiFast(atomCoordinates, partialCharges, bornRadii);
     _dG_dbornR.resize(numberOfAtoms, 0.0);
+
     for (int i = 0; i < numberOfAtoms; ++i){
         int atomI = i;
         for (int j = 0; j < neighborMatrix[i].size(); ++j){
@@ -280,7 +295,6 @@ double CharmmReferenceGBSW::computeEnergyForces(const vector<Vec3>& atomCoordina
             inputForces[atomJ] += force2_j;
         }
     }
-
     return energy;
 }
 
@@ -392,6 +406,242 @@ void CharmmReferenceGBSW::compute_dbornR_dr_vec(const std::vector<OpenMM::Vec3>&
     //_dbornR_dr_vec;
     if(volumeI==0) return;
     for(int atomK=0; atomK<_numberOfAtoms; ++atomK){
+        if(atomI==atomK) continue;
+        double deltaRik[ReferenceForce::LastDeltaRIndex];
+        if (_periodic)
+            ReferenceForce::getDeltaRPeriodic(quadCoordinate, atomCoordinates[atomK], _periodicBoxVectors, deltaRik);
+        else
+            ReferenceForce::getDeltaR(quadCoordinate, atomCoordinates[atomK], deltaRik);
+        double rik = deltaRik[ReferenceForce::RIndex];
+        double Rk = (_atomicRadii[atomK]+0.03)*0.9520;
+        double uk;
+        double duk_dri;
+        double w = switchDistance;
+        double w3 = w*w*w;
+        double dr = rik - Rk;
+        double dr2 = dr*dr;
+        double dr3 = dr*dr*dr;
+        if(rik>Rk-switchDistance && rik<Rk+switchDistance){
+            uk = 0.5 + 3.0/(4.0*w) * dr - 1.0/(4.0*w3) * dr3;
+            duk_dri = 3.0/(4.0*w) - 3.0/(4.0*w3) * dr2;
+        }else{
+            continue;
+        }
+        OpenMM::Vec3 rik_vec(deltaRik[ReferenceForce::XIndex],deltaRik[ReferenceForce::YIndex],
+                deltaRik[ReferenceForce::ZIndex]);
+        rik_vec = rik_vec / rik;
+        OpenMM::Vec3 dRi_dri = rik_vec*(prefactor*(duk_dri*volumeI/uk));
+        _dbornR_dr_vec[atomI][atomI] += dRi_dri;
+        _dbornR_dr_vec[atomI][atomK] -= dRi_dri;
+    }
+    return;
+}
+
+void CharmmReferenceGBSW::computeLookupTable(const vector<Vec3>& atomCoordinates){
+    //_lookupTable;
+    //
+    //_r1;
+    OpenMM::Vec3 minCoordinate(atomCoordinates[0]);
+    OpenMM::Vec3 maxCoordinate(atomCoordinates[0]);
+    double maxR = 0.0;
+    for(int atomI=0; atomI<_numberOfAtoms; ++atomI){
+        for(int i=0; i<3; ++i){
+            minCoordinate[i] = min(minCoordinate[i], atomCoordinates[atomI][i]);
+            maxCoordinate[i] = max(maxCoordinate[i], atomCoordinates[atomI][i]);
+        }
+        maxR = max(maxR, _atomicRadii[atomI]);
+    }
+    double paddingLength = _lookupTableBufferLength + maxR + _switchingDistance +
+        sqrt(3.0)/2.0*_lookupTableGridLength + 1e-6;
+    int totalNumberOfGridPoints = 1;
+    for(int i=0; i<3; ++i){
+        minCoordinate[i] -= paddingLength;
+        maxCoordinate[i] += paddingLength;
+        _lookupTableNumberOfGridPoints[i] = static_cast<int>(
+                ceil((maxCoordinate[i]-minCoordinate[i])/_lookupTableGridLength))+1;
+        _lookupTableMinCoordinate[i] = minCoordinate[i];
+        _lookupTableMaxCoordinate[i] = minCoordinate[i]+(_lookupTableNumberOfGridPoints[i]-1)*_lookupTableGridLength;
+        totalNumberOfGridPoints *= _lookupTableNumberOfGridPoints[i];
+        //cout<<minCoordinate[i]<<" "<<maxCoordinate[i]<<" "<<_lookupTableNumberOfGridPoints[i]<<endl;
+    }
+    int n_x = _lookupTableNumberOfGridPoints[0];
+    int n_y = _lookupTableNumberOfGridPoints[1];
+    int n_z = _lookupTableNumberOfGridPoints[2];
+    _lookupTable.clear();
+    _lookupTable.resize(totalNumberOfGridPoints,vector<int>());
+    for(int atomI=0; atomI<_numberOfAtoms; ++atomI){
+        OpenMM::Vec3 coor = atomCoordinates[atomI];
+        int beginLookupTableIndex[3];
+        int endLookupTableIndex[3];
+        for(int i=0; i<3; ++i){
+            beginLookupTableIndex[i] = floor(
+                    (coor[i]-paddingLength-_lookupTableMinCoordinate[i])/_lookupTableGridLength);
+            endLookupTableIndex[i] = ceil(
+                    (coor[i]+paddingLength-_lookupTableMinCoordinate[i])/_lookupTableGridLength);
+        }
+        for(int i=beginLookupTableIndex[0]; i<=endLookupTableIndex[0]; ++i){ //x
+            for(int j=beginLookupTableIndex[1]; j<=endLookupTableIndex[1]; ++j){ //y
+                for(int k=beginLookupTableIndex[2]; k<=endLookupTableIndex[2]; ++k){ //z
+                    int idx = i*n_y*n_z + j*n_z + k; //calculate grid idx
+                    OpenMM::Vec3 gridPoint(_lookupTableMinCoordinate[0]+i*_lookupTableGridLength,
+                            _lookupTableMinCoordinate[1]+j*_lookupTableGridLength,
+                            _lookupTableMinCoordinate[2]+k*_lookupTableGridLength);
+                    OpenMM::Vec3 diff = gridPoint - coor;
+                    if(sqrt(diff.dot(diff)) < paddingLength){
+                        _lookupTable[idx].push_back(atomI);
+                    }
+                }
+            }
+        }
+    }
+    /*
+    for(int i=0; i<totalNumberOfGridPoints; ++i){
+        if(_lookupTable[i].size()!=0){
+            int x_id = i/(n_x*n_y);
+            int y_id = i%(n_x*n_y)/n_y;
+            int z_id = i%(n_x*n_y)%n_y;
+            double x = _lookupTableMinCoordinate[0]+x_id*_lookupTableGridLength;
+            double y = _lookupTableMinCoordinate[1]+y_id*_lookupTableGridLength;
+            double z = _lookupTableMinCoordinate[2]+z_id*_lookupTableGridLength;
+            cout<<x<<" "<<y<<" "<<z<<endl;
+            for(auto &atomI : _lookupTable[i]){
+                cout<<atomI<<" ";
+            }
+            cout<<endl;
+        }
+    }
+    */
+}
+
+std::vector<int> CharmmReferenceGBSW::getLookupTableAtomList(OpenMM::Vec3 point){
+    vector<int> atomList;
+    int nx = _lookupTableNumberOfGridPoints[0];
+    int ny = _lookupTableNumberOfGridPoints[1];
+    int nz = _lookupTableNumberOfGridPoints[2];
+    int idx[3];
+    if(_periodic){
+        for(int i=0; i<3; ++i){
+            if(point[i] < _lookupTableMinCoordinate[i])
+                point += _periodicBoxVectors[i];
+            if(point[i] > _lookupTableMaxCoordinate[i])
+                point -= _periodicBoxVectors[i];
+        }
+        for(int i=0; i<3; ++i){
+            //if point is still outside of the lookupTable grid
+            if((point[i] < _lookupTableMinCoordinate[i]) || 
+                    (point[i] > _lookupTableMaxCoordinate[i])){
+                return atomList;
+            }
+            idx[i] = static_cast<int>(floor(
+                        (point[i]-_lookupTableMinCoordinate[i]) / _lookupTableGridLength));
+        }
+    }else{
+        for(int i=0; i<3; ++i){
+            //if point is outside of the lookupTable grid
+            if((point[i] < _lookupTableMinCoordinate[i]) || 
+                    (point[i] > _lookupTableMaxCoordinate[i])){
+                return atomList;
+            }
+            idx[i] = static_cast<int>(floor(
+                        (point[i]-_lookupTableMinCoordinate[i]) / _lookupTableGridLength));
+        }
+    }
+    int lookupTableIdx = idx[0]*(ny*nz) + idx[1]*nz + idx[2];
+    atomList = _lookupTable[lookupTableIdx];
+    return atomList;
+}
+
+void CharmmReferenceGBSW::computeBornRadiiFast(const std::vector<OpenMM::Vec3>& atomCoordinates,const std::vector<double>& partialCharges, std::vector<double>& bornRadii){
+    //vector<double> _atomicRadii;
+    //vector<OpenMM::Vec3> atomCoordinates
+    //vector<double> partialCharges
+    //generate quadrature points
+    double alpha0 = -0.180; //-0.180
+    double alpha1 = 1.817;
+    double switchDistance = 0.03;
+    _dbornR_dr_vec.resize(_numberOfAtoms,std::vector<OpenMM::Vec3>(_numberOfAtoms));
+    vector<double> VolumeQuad(_quad.size());
+    for(int atomI=0; atomI<_numberOfAtoms; ++atomI){
+        //compute Born Radius
+        OpenMM::Vec3 atomICoordinate = atomCoordinates[atomI];
+        double charge = partialCharges[atomI];
+        double vdwR = _atomicRadii[atomI];
+        double eta = _r0;
+        double eta4 = eta*eta*eta*eta;
+        double integral1 = 0.0;
+        double integral2 = 0.0;
+        for(int i=0; i<_quad.size(); ++i){
+            OpenMM::Vec3 rQuad;
+            rQuad[0] = atomICoordinate[0] + _quad[i][0];
+            rQuad[1] = atomICoordinate[1] + _quad[i][1];
+            rQuad[2] = atomICoordinate[2] + _quad[i][2];
+            vector<int> atomList = getLookupTableAtomList(rQuad);
+            if(atomList.size()==0){
+                VolumeQuad[i] = 1.0;
+                continue;
+            }
+            else VolumeQuad[i] = computeVolumeFast(atomCoordinates, rQuad, switchDistance, atomList);
+            double radius = _quad[i][3];
+            double weight = _quad[i][4];
+            double molecularVolume = 1.0 - VolumeQuad[i];
+            integral1 += weight * molecularVolume/(radius*radius);
+            double radius5 = radius*radius*radius*radius*radius;
+            integral2 += weight * molecularVolume/radius5;
+        }
+        double inverseBornRi = alpha0*(1.0/eta - integral1) + 
+            alpha1*pow((1.0/(4.0*eta4) - integral2), 1.0/4.0);
+        bornRadii[atomI] = 1.0/inverseBornRi;
+        //cout<<bornRadii[atomI]<<endl;
+        //cout<<integral1<<" "<<integral2<<endl;
+        //compute dRBorn_dr
+        for(int i=0; i<_quad.size(); ++i){
+            OpenMM::Vec3 rQuad;
+            rQuad[0] = atomICoordinate[0] + _quad[i][0];
+            rQuad[1] = atomICoordinate[1] + _quad[i][1];
+            rQuad[2] = atomICoordinate[2] + _quad[i][2];
+            vector<int> atomList = getLookupTableAtomList(rQuad);
+            if(atomList.size() == 0) continue;
+            double radius = _quad[i][3];
+            double radius5 = radius*radius*radius*radius*radius;
+            double weight = _quad[i][4];
+            double part1 = alpha0/(radius*radius);
+            double part2 = (1.0/4.0)*alpha1*pow((1.0/(4.0*eta4)-integral2),-3.0/4.0)/radius5;
+            double prefactor = (bornRadii[atomI]*bornRadii[atomI])*weight*(part1+part2);
+            compute_dbornR_dr_vec_Fast(atomCoordinates, atomI, prefactor, rQuad, VolumeQuad[i], switchDistance, atomList);
+        }
+    }
+    return;
+}
+
+double CharmmReferenceGBSW::computeVolumeFast(const std::vector<OpenMM::Vec3>& atomCoordinates, const OpenMM::Vec3& quadCoordinate, const double switchDistance, const std::vector<int>& atomList){
+    double V = 1.0;
+    for(const int& atomJ : atomList){
+        double deltaR[ReferenceForce::LastDeltaRIndex];
+        if (_periodic)
+            ReferenceForce::getDeltaRPeriodic(quadCoordinate, atomCoordinates[atomJ], _periodicBoxVectors, deltaR);
+        else
+            ReferenceForce::getDeltaR(quadCoordinate, atomCoordinates[atomJ], deltaR);
+        double r = deltaR[ReferenceForce::RIndex];
+        double RatomJ = (_atomicRadii[atomJ]+0.03)*0.9520;
+        double w = switchDistance;
+        double w3 = w*w*w;
+        double dr = r - RatomJ;
+        double dr3 = dr*dr*dr;
+        if(r <= RatomJ - switchDistance){
+            return 0.0;
+        }else if(r >= RatomJ + switchDistance){
+            continue;
+        }else{
+            V *= 0.5 + 3.0/(4.0*w) * dr - 1.0/(4.0*w3) * dr3;
+        }
+    } 
+    return V;
+}
+
+void CharmmReferenceGBSW::compute_dbornR_dr_vec_Fast(const std::vector<OpenMM::Vec3>& atomCoordinates, const int atomI, const double prefactor, const OpenMM::Vec3& quadCoordinate, const double volumeI, const double switchDistance, const std::vector<int>& atomList){
+    //_dbornR_dr_vec;
+    if(volumeI==0) return;
+    for(const int& atomK : atomList){
         if(atomI==atomK) continue;
         double deltaRik[ReferenceForce::LastDeltaRIndex];
         if (_periodic)
