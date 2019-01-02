@@ -25,6 +25,7 @@
 #ifndef __CharmmReferenceKernels_H__
 #define __CharmmReferenceKernels_H__
 
+#include "GBSWIntegral.h"
 #include "openmm/CharmmGBMVForce.h"
 #include "openmm/CharmmGBSWForce.h"
 #include "openmm/charmmKernels.h"
@@ -69,8 +70,10 @@ public:
      */
     void copyParametersToContext(ContextImpl& context, const CharmmGBMVForce& force);
 private:
+    double validateIntegral(ContextImpl& context, bool includeForces, bool includeEnergy);
     CharmmReferenceGBMV* gbmv;
     std::vector<double> charges;
+    GBSWIntegral integral;
 };
 
 /**

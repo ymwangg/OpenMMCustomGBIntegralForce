@@ -24,6 +24,7 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.      *
  * -------------------------------------------------------------------------- */
 
+#include "GBSWIntegral.h"
 #include "ReferenceNeighborList.h"
 #include "CharmmReferenceKernels.h"
 #include "CharmmReferenceGBMV.h"
@@ -103,11 +104,67 @@ void ReferenceCalcCharmmGBMVForceKernel::initialize(const System& system, const 
         gbmv->setNoCutoff();
         gbmv->setNoPeriodic();
     }
+    integral.initialize(system,force);
 }
 
+double ReferenceCalcCharmmGBMVForceKernel::validateIntegral(ContextImpl& context, bool includeForces, bool includeEnergy) {
+    int atomId = 0;
+    vector<Vec3> posData = extractPositions(context);
+    std::vector<std::vector<OpenMM::Vec3> > gradients;
+    std::vector<std::vector<OpenMM::Vec3> > gradientsFD;
+    std::vector<int> orders = {4};
+    gradientsFD.resize(orders.size(),std::vector<OpenMM::Vec3>(posData.size()));
+    double d=1e-6;
+    std::vector<double> values1;
+    integral.evaluate(atomId, context, posData, orders, values1, gradients, true);
+    for(int i=0; i<posData.size(); ++i){
+        for(int k=0; k<3; ++k){
+            std::vector<double> values2;
+            posData = extractPositions(context);
+            posData[i][k] += d;
+            integral.evaluate(atomId, context, posData, orders, values2, gradients, false);
+            for(int j=0; j<values1.size(); ++j){
+                gradientsFD[j][i][k] = (values2[j]-values1[j])/d;
+            }
+        }
+    }
+    double error = 0.0;
+    int n=0;
+    OpenMM::Vec3 delta;
+    for(int i=0; i<orders.size(); ++i){
+        cout<<"value "<<i<<endl;
+        for(int j=0; j<posData.size(); ++j){
+            cout<<gradients[i][j]<<" "<<gradientsFD[i][j]<<endl;
+            delta = gradients[i][j] - gradientsFD[i][j];
+            error += delta.dot(delta);
+            n++;
+        }
+    }
+    error = sqrt(error/n); //should be below 0.1
+    cout<<error<<endl;
+    return error;
+}
 double ReferenceCalcCharmmGBMVForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
     vector<Vec3>& posData = extractPositions(context);
     vector<Vec3>& forceData = extractForces(context);
+
+    int valueId = 1;
+    int atomId = 0;
+    int coorId = 2;
+    std::vector<std::vector<OpenMM::Vec3> > gradients;
+    std::vector<double> values1;
+    std::vector<int> orders = {2,5};
+    integral.evaluate(atomId, context, posData, orders, values1, gradients, true);
+    std::vector<double> values2;
+    posData[atomId][coorId] += 1e-6;
+    integral.evaluate(atomId, context, posData, orders, values2, gradients, false);
+    cout<<(values2[valueId]-values1[valueId])/1e-6<<endl;
+    cout<<gradients[valueId][atomId][coorId]<<endl;
+
+    validateIntegral(context,includeForces,includeEnergy);
+
+    return 0.0;
+
     if (gbmv->getUseCutoff() && gbmv->getPeriodic())
         gbmv->setPeriodic(extractBoxVectors(context));
     if (gbmv->getUseCutoff()) {
