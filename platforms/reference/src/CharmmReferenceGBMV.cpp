@@ -256,7 +256,9 @@ void CharmmReferenceGBMV::calculateSingleParticleEnergyTerm(int index, int numAt
         }
         for (int j = 0; j < numberOfValues; j++){
             dEdV[j][i] += energyDerivExpressions[index][j+numberOfIntegrals].evaluate();
+            //cout<<dEdV[j][i]<<" ";
         }
+        //cout<<endl;
         forces[i][0] -= energyGradientExpressions[index][0].evaluate();
         forces[i][1] -= energyGradientExpressions[index][1].evaluate();
         forces[i][2] -= energyGradientExpressions[index][2].evaluate();
@@ -361,13 +363,15 @@ void CharmmReferenceGBMV::calculateChainRuleForces(int numAtoms, vector<Vec3>& a
             expressionSet.setVariable(integralIndex[j], integrals[j][i]);
         for (int j = 0; j < numberOfValues; j++)
             expressionSet.setVariable(valueIndex[j], values[j][i]);
-        vector<vector<double> > dVdI(numberOfValues, vector<double>(numberOfIntegrals, 0.0));
-        //calculate dEdI
+        //calculate dEdV using chain rule
         for (int j = 0; j < numberOfValues; j++){
             for(int k = 0; k < j; k++){
                 double dVdV = valueDerivExpressions[j][k+numberOfIntegrals].evaluate();
                 dEdV[k][i] += dEdV[j][i]*dVdV;
             }
+        }
+        //calculate dEdI
+        for (int j = 0; j < numberOfValues; j++){
             for(int k = 0; k < numberOfIntegrals; k++){
                 double dVdI = valueDerivExpressions[j][k].evaluate();
                 dEdI[k][i] += dEdV[j][i]*dVdI;
@@ -407,7 +411,7 @@ void CharmmReferenceGBMV::calculateChainRuleForces(int numAtoms, vector<Vec3>& a
 
     // Compute chain rule terms for computed values that depend explicitly on particle coordinates.
 
-    for (int i = 0; i < numAtoms; i++) {
+    for (int i = 0; i < numberOfAtoms; i++) {
         expressionSet.setVariable(xIndex, atomCoordinates[i][0]);
         expressionSet.setVariable(yIndex, atomCoordinates[i][1]);
         expressionSet.setVariable(zIndex, atomCoordinates[i][2]);
@@ -421,7 +425,7 @@ void CharmmReferenceGBMV::calculateChainRuleForces(int numAtoms, vector<Vec3>& a
         for (int j = 0; j < numberOfValues; j++) {
             expressionSet.setVariable(valueIndex[j], values[j][i]);
             for (int k = 0; k < j; k++) {
-                double dVdV = valueDerivExpressions[j+numberOfIntegrals][k].evaluate();
+                double dVdV = valueDerivExpressions[j][k+numberOfIntegrals].evaluate();
                 dVdX[j] += dVdV*dVdX[k];
                 dVdY[j] += dVdV*dVdY[k];
                 dVdZ[j] += dVdV*dVdZ[k];
