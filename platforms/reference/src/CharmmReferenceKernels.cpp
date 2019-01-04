@@ -122,19 +122,20 @@ ReferenceCalcCharmmGBMVForceKernel::~ReferenceCalcCharmmGBMVForceKernel() {
 }
 
 void ReferenceCalcCharmmGBMVForceKernel::initialize(const System& system, const CharmmGBMVForce& force) {
-    if(force.getNumVolumeIntegrals()>0)
-        integral.initialize(system,force);
+    integralMethod = new GBSWIntegral();
+    if(force.getNumGBIntegrals()>0)
+        integralMethod->initialize(system,force);
     /*
     if (force.getNumComputedValues() > 0) {
         string name, expression;
         CharmmGBMVForce::ComputationType type;
         force.getComputedValueParameters(0, name, expression, type);
         if (type == CharmmGBMVForce::SingleParticle)
-            throw OpenMMException("ReferencePlatform requires that the first computed value for a CharmmGBMVForce be of type VolumeIntegral.");
+            throw OpenMMException("ReferencePlatform requires that the first computed value for a CharmmGBMVForce be of type GBIntegral.");
         for (int i = 1; i < force.getNumComputedValues(); i++) {
             force.getComputedValueParameters(i, name, expression, type);
             if (type != CharmmGBMVForce::SingleParticle)
-                throw OpenMMException("ReferencePlatform requires that a CharmmGBMVForce only have one computed value of type VolumeIntegral.");
+                throw OpenMMException("ReferencePlatform requires that a CharmmGBMVForce only have one computed value of type GBIntegral.");
         }
     }
     */
@@ -183,7 +184,7 @@ void ReferenceCalcCharmmGBMVForceKernel::initialize(const System& system, const 
 
     // Parse the expressions for computed values.
 
-    valueDerivExpressions.resize(force.getNumComputedValues()+force.getNumVolumeIntegrals());
+    valueDerivExpressions.resize(force.getNumComputedValues()+force.getNumGBIntegrals());
     valueGradientExpressions.resize(force.getNumComputedValues());
     valueParamDerivExpressions.resize(force.getNumComputedValues());
     set<string> particleVariables, pairVariables;
@@ -200,10 +201,9 @@ void ReferenceCalcCharmmGBMVForceKernel::initialize(const System& system, const 
     pairVariables.insert(globalParameterNames.begin(), globalParameterNames.end());
 
     //add volume integral names
-    for(int i = 0; i < force.getNumVolumeIntegrals(); i++){
+    for(int i = 0; i < force.getNumGBIntegrals(); i++){
         string name;
-        std::map<std::string,double> parameters;
-        force.getVolumeIntegralParameters(i, name, parameters);
+        force.getGBIntegralParameters(i, name);
         integralNames.push_back(name);
         particleVariables.insert(name);
         pairVariables.insert(name+"1");
@@ -221,7 +221,7 @@ void ReferenceCalcCharmmGBMVForceKernel::initialize(const System& system, const 
         valueGradientExpressions[i].push_back(ex.differentiate("x").createCompiledExpression());
         valueGradientExpressions[i].push_back(ex.differentiate("y").createCompiledExpression());
         valueGradientExpressions[i].push_back(ex.differentiate("z").createCompiledExpression());
-        for (int j = 0; j < force.getNumVolumeIntegrals(); j++){
+        for (int j = 0; j < force.getNumGBIntegrals(); j++){
             valueDerivExpressions[i].push_back(ex.differentiate(integralNames[j]).createCompiledExpression());
         }
         for (int j = 0; j < i; j++)
@@ -239,7 +239,7 @@ void ReferenceCalcCharmmGBMVForceKernel::initialize(const System& system, const 
 
     // Parse the expressions for energy terms.
 
-    energyDerivExpressions.resize(force.getNumEnergyTerms()+force.getNumVolumeIntegrals());
+    energyDerivExpressions.resize(force.getNumEnergyTerms()+force.getNumGBIntegrals());
     energyGradientExpressions.resize(force.getNumEnergyTerms());
     energyParamDerivExpressions.resize(force.getNumEnergyTerms());
     for (int i = 0; i < force.getNumEnergyTerms(); i++) {
@@ -251,7 +251,7 @@ void ReferenceCalcCharmmGBMVForceKernel::initialize(const System& system, const 
         energyTypes.push_back(type);
         if (type != CharmmGBMVForce::SingleParticle)
             energyDerivExpressions[i].push_back(ex.differentiate("r").createCompiledExpression());
-        for (int j = 0; j < force.getNumVolumeIntegrals(); j++){
+        for (int j = 0; j < force.getNumGBIntegrals(); j++){
             if (type == CharmmGBMVForce::SingleParticle) {
                 energyDerivExpressions[i].push_back(ex.differentiate(integralNames[j]).createCompiledExpression());
                 energyGradientExpressions[i].push_back(ex.differentiate("x").createCompiledExpression());
@@ -298,13 +298,13 @@ double ReferenceCalcCharmmGBMVForceKernel::validateIntegral(ContextImpl& context
     gradientsFD.resize(orders.size(),std::vector<OpenMM::Vec3>(posData.size()));
     double d=1e-6;
     std::vector<double> values1;
-    integral.evaluate(atomId, context, posData, orders, values1, gradients, true);
+    integralMethod->evaluate(atomId, context, posData, values1, gradients, true);
     for(int i=0; i<posData.size(); ++i){
         for(int k=0; k<3; ++k){
             std::vector<double> values2;
             posData = extractPositions(context);
             posData[i][k] += d;
-            integral.evaluate(atomId, context, posData, orders, values2, gradients, false);
+            integralMethod->evaluate(atomId, context, posData, values2, gradients, false);
             for(int j=0; j<values1.size(); ++j){
                 gradientsFD[j][i][k] = (values2[j]-values1[j])/d;
             }
@@ -326,29 +326,14 @@ double ReferenceCalcCharmmGBMVForceKernel::validateIntegral(ContextImpl& context
     return error;
 }
 double ReferenceCalcCharmmGBMVForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
+    //validateIntegral(context);
+
     vector<Vec3>& posData = extractPositions(context);
     vector<Vec3>& forceData = extractForces(context);
 
-    /*
-    int valueId = 1;
-    int atomId = 0;
-    int coorId = 2;
-    std::vector<std::vector<OpenMM::Vec3> > gradients;
-    std::vector<double> values1;
-    std::vector<int> orders = {2,5};
-    integral.evaluate(atomId, context, posData, orders, values1, gradients, true);
-    std::vector<double> values2;
-    posData[atomId][coorId] += 1e-6;
-    integral.evaluate(atomId, context, posData, orders, values2, gradients, false);
-    cout<<(values2[valueId]-values1[valueId])/1e-6<<endl;
-    cout<<gradients[valueId][atomId][coorId]<<endl;
-
-    */
-    //validateIntegral(context);
-
     double energy = 0;
     int numIntegrals = integralNames.size();
-    CharmmReferenceGBMV ixn(numParticles, integralNames, integral, valueExpressions,
+    CharmmReferenceGBMV ixn(numParticles, integralNames, *integralMethod, valueExpressions,
             valueDerivExpressions, valueGradientExpressions, valueParamDerivExpressions,
             valueNames, valueTypes,energyExpressions, energyDerivExpressions, 
             energyGradientExpressions, energyParamDerivExpressions, energyTypes, particleParameterNames);

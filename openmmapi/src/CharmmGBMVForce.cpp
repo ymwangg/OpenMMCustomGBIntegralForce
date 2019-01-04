@@ -148,8 +148,9 @@ int CharmmGBMVForce::addComputedValue(const std::string& name, const std::string
     return computedValues.size()-1;
 }
 
-int CharmmGBMVForce::addVolumeIntegral(const std::string& name, const std::map<std::string, double> parameters){
-    computedVolumeIntegrals.push_back(CharmmGBMVForce::VolumeIntegralInfo(name, parameters));
+int CharmmGBMVForce::addGBIntegral(const std::string& name, const std::vector<int>& parametersInt, const std::vector<double>& parametersReal){
+    computedGBIntegrals.push_back(CharmmGBMVForce::GBIntegralInfo(name, parametersInt, parametersReal));
+    return computedGBIntegrals.size()-1;
 }
 
 void CharmmGBMVForce::getComputedValueParameters(int index, std::string& name, std::string& expression, ComputationType& type) const {
@@ -159,10 +160,25 @@ void CharmmGBMVForce::getComputedValueParameters(int index, std::string& name, s
     type = computedValues[index].type;
 }
 
-void CharmmGBMVForce::getVolumeIntegralParameters(int index, std::string& name, std::map<std::string, double> parameters) const {
-    ASSERT_VALID_INDEX(index, computedVolumeIntegrals);
-    name = computedVolumeIntegrals[index].name;
-    parameters = computedVolumeIntegrals[index].parameters;
+void CharmmGBMVForce::getGBIntegralParameters(int index, std::string& name, std::vector<int>& parametersInt, std::vector<double>& parametersReal) const {
+    ASSERT_VALID_INDEX(index, computedGBIntegrals);
+    name = computedGBIntegrals[index].name;
+    parametersReal = computedGBIntegrals[index].parametersReal;
+    parametersInt = computedGBIntegrals[index].parametersInt;
+}
+
+void CharmmGBMVForce::getGBIntegralParameters(int index, std::string& name, std::vector<int>& parametersInt) const {
+    ASSERT_VALID_INDEX(index, computedGBIntegrals);
+    name = computedGBIntegrals[index].name;
+    parametersInt = computedGBIntegrals[index].parametersInt;
+}
+
+void CharmmGBMVForce::getGBIntegralParameters(int index, std::string& name) const {
+    name = computedGBIntegrals[index].name;
+}
+
+void CharmmGBMVForce::setGBIntegralType(GBIntegralType type){
+    integralType = type;
 }
 
 void CharmmGBMVForce::setComputedValueParameters(int index, const std::string& name, const std::string& expression, ComputationType type) {
@@ -172,10 +188,11 @@ void CharmmGBMVForce::setComputedValueParameters(int index, const std::string& n
     computedValues[index].type = type;
 }
 
-void CharmmGBMVForce::setVolumeIntegralParameters(int index, const std::string& name, const std::map<std::string, double> parameters) {
-    ASSERT_VALID_INDEX(index, computedVolumeIntegrals);
-    computedVolumeIntegrals[index].name = name;
-    computedVolumeIntegrals[index].parameters = parameters;
+void CharmmGBMVForce::setGBIntegralParameters(int index, const std::string& name, const std::vector<int> parametersInt, const std::vector<double> parametersReal) {
+    ASSERT_VALID_INDEX(index, computedGBIntegrals);
+    computedGBIntegrals[index].name = name;
+    computedGBIntegrals[index].parametersReal = parametersReal;
+    computedGBIntegrals[index].parametersInt = parametersInt;
 
 }
 

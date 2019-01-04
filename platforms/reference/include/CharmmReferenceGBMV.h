@@ -3,7 +3,7 @@
 #include "ReferenceNeighborList.h"
 #include "openmm/internal/CompiledExpressionSet.h"
 #include "openmm/CharmmGBMVForce.h"
-#include "GBSWIntegral.h"
+#include "CustomGBIntegral.h"
 #include <map>
 #include <set>
 #include <vector>
@@ -15,7 +15,7 @@ class CharmmReferenceGBMV {
    private:
 
       ContextImpl* context;
-      GBSWIntegral* VolumeIntegral;
+      CustomGBIntegral* integralMethod;
       bool cutoff;
       bool periodic;
       const OpenMM::NeighborList* neighborList;
@@ -178,7 +178,7 @@ class CharmmReferenceGBMV {
 
          --------------------------------------------------------------------------------------- */
 
-       CharmmReferenceGBMV(const int numberOfAtoms, const std::vector<std::string>& integralNames, GBSWIntegral& integral,
+       CharmmReferenceGBMV(const int numberOfAtoms, const std::vector<std::string>& integralNames, CustomGBIntegral& integral,
                             const std::vector<Lepton::CompiledExpression>& valueExpressions,
                             const std::vector<std::vector<Lepton::CompiledExpression> > valueDerivExpressions,
                             const std::vector<std::vector<Lepton::CompiledExpression> > valueGradientExpressions,

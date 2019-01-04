@@ -29,7 +29,6 @@
 #include "openmm/CharmmGBMVForce.h"
 #include "openmm/CharmmGBSWForce.h"
 #include "openmm/charmmKernels.h"
-//#include "openmm/System.h"
 #include <vector>
 
 #include "ReferencePlatform.h"
@@ -94,7 +93,7 @@ private:
     std::vector<OpenMM::CharmmGBMVForce::ComputationType> energyTypes;
     NonbondedMethod nonbondedMethod;
     NeighborList* neighborList;
-    GBSWIntegral integral;
+    CustomGBIntegral* integralMethod;
 };
 
 /**

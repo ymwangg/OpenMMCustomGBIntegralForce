@@ -22,7 +22,7 @@ using namespace OpenMM;
    --------------------------------------------------------------------------------------- */
 
 CharmmReferenceGBMV::CharmmReferenceGBMV(const int numberOfAtoms, const std::vector<std::string>& integralNames, 
-                     GBSWIntegral& integral,
+                     CustomGBIntegral& integral,
                      const vector<Lepton::CompiledExpression>& valueExpressions,
                      const vector<vector<Lepton::CompiledExpression> > valueDerivExpressions,
                      const vector<vector<Lepton::CompiledExpression> > valueGradientExpressions,
@@ -38,7 +38,7 @@ CharmmReferenceGBMV::CharmmReferenceGBMV(const int numberOfAtoms, const std::vec
             numberOfAtoms(numberOfAtoms), cutoff(false), periodic(false), valueExpressions(valueExpressions), valueDerivExpressions(valueDerivExpressions), valueGradientExpressions(valueGradientExpressions), valueParamDerivExpressions(valueParamDerivExpressions),
             valueTypes(valueTypes), energyExpressions(energyExpressions), energyDerivExpressions(energyDerivExpressions), energyGradientExpressions(energyGradientExpressions), energyParamDerivExpressions(energyParamDerivExpressions),
             energyTypes(energyTypes)  {
-    VolumeIntegral = &integral;
+    integralMethod = &integral;
     numberOfIntegrals = integralNames.size();
     numberOfValues = valueNames.size();
     for (int i = 0; i < this->valueExpressions.size(); i++)
@@ -152,7 +152,6 @@ void CharmmReferenceGBMV::calculateIxn(vector<Vec3>& atomCoordinates, double** a
     if(numberOfIntegrals > 0){
         volumeIntegralGradients.resize(numberOfIntegrals); //dI[integral][atom]/dr[atomJ]
         integrals.resize(numberOfIntegrals);
-        vector<int> orders = {2, 5};
         for(int i=0; i<numberOfIntegrals; ++i){
             volumeIntegralGradients[i].resize(numberOfAtoms,vector<Vec3>(numberOfAtoms,Vec3()));
             integrals[i].resize(numberOfAtoms);
@@ -160,7 +159,7 @@ void CharmmReferenceGBMV::calculateIxn(vector<Vec3>& atomCoordinates, double** a
         for(int atomI = 0; atomI < numberOfAtoms; ++atomI){
             vector<double> tmpValues;
             std::vector<std::vector<OpenMM::Vec3> > tmpGradients;
-            VolumeIntegral->evaluate(atomI, inContext, atomCoordinates, orders, tmpValues, tmpGradients, true);
+            integralMethod->evaluate(atomI, inContext, atomCoordinates, tmpValues, tmpGradients, true);
             for(int i=0; i<numberOfIntegrals; ++i){
                 integrals[i][atomI] = tmpValues[i];
                 volumeIntegralGradients[i][atomI] = tmpGradients[i];

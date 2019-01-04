@@ -94,7 +94,13 @@ public:
          */
         ParticlePair = 1,
         ParticlePairNoExclusions = 2,
-        VolumeIntegral = 3,
+    };
+
+    enum GBIntegralType {
+        GBSW = 0,
+        GBMV1 = 1,
+        GBMV2 = 2,
+        Custom = 3,
     };
     /**
      * Create a CharmmGBMVForce.
@@ -153,8 +159,8 @@ public:
         return computedValues.size();
     }
 
-    int getNumVolumeIntegrals() const {
-        return computedVolumeIntegrals.size();
+    int getNumGBIntegrals() const {
+        return computedGBIntegrals.size();
     }
     /**
      * Get the number of terms in the energy computation.
@@ -314,9 +320,22 @@ public:
      *                         value is being calculated, and "2" to indicate the particle it is interacting with.
      * @param[out] type        the method to use for computing this value
      */
-    int addVolumeIntegral(const std::string& name, const std::map<std::string, double> parameters);
+
     void getComputedValueParameters(int index, std::string& name, std::string& expression, ComputationType& type) const;
-    void getVolumeIntegralParameters(int index, std::string& name, std::map<std::string, double> parameters) const;
+
+    int addGBIntegral(const std::string& name, const std::vector<int>& parametersInt = std::vector<int>(), const std::vector<double>& parametersReal = std::vector<double>());
+
+
+    void getGBIntegralParameters(int index, std::string& name, std::vector<int>& parametersInt, std::vector<double>& parametersReal) const;
+
+    void getGBIntegralParameters(int index, std::string& name, std::vector<int>& parametersInt) const;
+    
+    void getGBIntegralParameters(int index, std::string& name) const;
+
+    void setGBIntegralType(GBIntegralType type);
+
+    void setGBIntegralParameters(int index, const std::string& name, std::vector<int> parametersInt, const std::vector<double> parametersReal);
+
     /**
      * Set the properties of a computed value.
      *
@@ -335,7 +354,6 @@ public:
      * @param type        the method to use for computing this value
      */
     void setComputedValueParameters(int index, const std::string& name, const std::string& expression, ComputationType type);
-    void setVolumeIntegralParameters(int index, const std::string& name, const std::map<std::string, double> parameters);
     /**
      * Add a term to the energy computation.
      *
@@ -490,8 +508,9 @@ private:
     class ExclusionInfo;
     class FunctionInfo;
     class ComputationInfo;
-    class VolumeIntegralInfo;
+    class GBIntegralInfo;
     NonbondedMethod nonbondedMethod;
+    GBIntegralType integralType;
     double cutoffDistance;
     std::vector<PerParticleParameterInfo> parameters;
     std::vector<GlobalParameterInfo> globalParameters;
@@ -499,7 +518,7 @@ private:
     std::vector<ExclusionInfo> exclusions;
     std::vector<FunctionInfo> functions;
     std::vector<ComputationInfo> computedValues;
-    std::vector<VolumeIntegralInfo> computedVolumeIntegrals;
+    std::vector<GBIntegralInfo> computedGBIntegrals;
     std::vector<ComputationInfo> energyTerms;
     std::vector<int> energyParameterDerivatives;
 };
@@ -587,14 +606,15 @@ public:
     }
 };
 
-class CharmmGBMVForce::VolumeIntegralInfo {
+class CharmmGBMVForce::GBIntegralInfo {
 public:
     std::string name;
-    std::map<std::string, double> parameters;
-    VolumeIntegralInfo() {
+    std::vector<double> parametersReal;
+    std::vector<int> parametersInt;
+    GBIntegralInfo() {
     }
-    VolumeIntegralInfo(const std::string& name, const std::map<std::string, double> parameter) :
-        name(name), parameters(parameters) {
+    GBIntegralInfo(const std::string& name, const std::vector<int>& parametersInt, const std::vector<double>& parametersReal) :
+        name(name),  parametersInt(parametersInt), parametersReal(parametersReal) {
     }
 };
 

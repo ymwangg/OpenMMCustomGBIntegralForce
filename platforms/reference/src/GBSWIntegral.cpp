@@ -4,6 +4,7 @@
 #include "Units.h"
 #include "Vec3.h"
 #include "GBSWIntegral.h"
+#include "openmm/OpenMMException.h"
 
 using namespace::OpenMM;
 using namespace::std;
@@ -15,10 +16,19 @@ static Vec3* extractBoxVectors(ContextImpl& context) {
 
 GBSWIntegral::GBSWIntegral(){
     _periodic = false;
+    //half of switching distance
     _sw = 0.3*OpenMM::NmPerAngstrom;
+
+    //radial integral starting point
     _r0 = 0.5*OpenMM::NmPerAngstrom;
+
+    //radial integral ending point
     _r1 = 20.0*OpenMM::NmPerAngstrom;
+
+    //number of radial integration points using Gauss-Legendre quadrature
     int nRadialPoints = 24; 
+
+    //rule of Lebedev quadrature for spherical integral
     int ruleLebedev = 4;
     vector<vector<double> > radialQuad = CharmmQuadrature::GaussLegendre(_r0, _r1, nRadialPoints);
     vector<vector<double> > sphericalQuad = CharmmQuadrature::Lebedev(ruleLebedev);
@@ -39,13 +49,35 @@ GBSWIntegral::GBSWIntegral(){
 }
 
 void GBSWIntegral::initialize(const OpenMM::System& system, const OpenMM::CharmmGBMVForce& force){
-    int numParticles = system.getNumParticles();
+    numParticles = system.getNumParticles();
+    numIntegrals = force.getNumGBIntegrals();
     _atomicRadii.resize(numParticles);
+    //query per particle names
+    int numParticleParams = force.getNumPerParticleParameters();
+    std::map<std::string,int> paramIndex;
+    for(int i = 0; i < numParticleParams; i++){
+        std::string name = force.getPerParticleParameterName(i);
+        paramIndex[name] = i;
+    }
+    if(paramIndex.count("radius")==0)
+        throw OpenMMException("GBSWIntegral: the per perticle parameter 'radius' must be defined");
+    //update atomic radii
     for (int i = 0; i < numParticles; ++i) {
-        std::vector<double> param;
-        force.getParticleParameters(i, param);
-        _atomicRadii[i] = param[1];
+        std::vector<double> particleParam;
+        force.getParticleParameters(i, particleParam);
+        _atomicRadii[i] = particleParam[paramIndex["radius"]];
     } 
+    for (int i = 0; i < numIntegrals; ++i){
+        std::string name;
+        std::vector<int> parInt;
+        std::vector<double> parReal;
+        force.getGBIntegralParameters(i, name, parInt, parReal);
+        if(parInt.size()==0)
+            throw OpenMMException("GBSWIntegral: the order of integral must be given");
+        if(parInt[0] < 2)
+            throw OpenMMException("GBSWIntegral: the order of integral must be greater or equal to 2");
+        orders.push_back(parInt[0]-2);
+    }
     return;
 }
 
@@ -55,35 +87,33 @@ void GBSWIntegral::setBoxVectors(OpenMM::Vec3* vectors){
     _periodicBoxVectors[2] = vectors[2];
 }
 
-void GBSWIntegral::evaluate(const int atomI, ContextImpl& context, const std::vector<OpenMM::Vec3>& atomPositions, const std::vector<int>& orders, std::vector<double>& values, std::vector<std::vector<OpenMM::Vec3> >& gradients, const bool includeGradient){
+void GBSWIntegral::evaluate(const int atomI, ContextImpl& context, const std::vector<OpenMM::Vec3>& atomCoordinates, std::vector<double>& values, std::vector<std::vector<OpenMM::Vec3> >& gradients, const bool includeGradient){
     setBoxVectors(extractBoxVectors(context));
-    int numberOfAtoms = atomPositions.size();
-    int numberOfComputedValues = orders.size();
-    values.resize(numberOfComputedValues, 0.0);
-    if(includeGradient) gradients.resize(numberOfComputedValues);
+    values.resize(orders.size(), 0.0);
+    if(includeGradient) gradients.resize(orders.size());
     vector<double> prefactors(_quad.size());
     for(int q=0; q<_quad.size(); ++q){
         OpenMM::Vec3 r_q;
         for(int i=0; i<3; ++i) 
-            r_q[i] = atomPositions[atomI][i] + _quad[q][i];
+            r_q[i] = atomCoordinates[atomI][i] + _quad[q][i];
         double radius_q = _quad[q][3];
         double w_q = _quad[q][4];
-        double V_q = computeVolume(atomPositions, r_q);
-        for(int i=0; i<numberOfComputedValues; ++i){
+        double V_q = computeVolume(atomCoordinates, r_q);
+        for(int i=0; i<orders.size(); ++i){
             prefactors[i] = w_q/pow(radius_q, orders[i]);
             values[i] += prefactors[i]*(1.0 - V_q);
         }
         if(includeGradient){
-            for(int i=0; i<numberOfComputedValues; ++i){
-                gradients[i].resize(numberOfAtoms, OpenMM::Vec3()); 
-                computeGradientPerQuad(atomI, atomPositions, r_q, V_q, gradients[i], prefactors[i]);
+            for(int i=0; i<orders.size(); ++i){
+                gradients[i].resize(numParticles, OpenMM::Vec3()); 
+                computeGradientPerQuad(atomI, atomCoordinates, r_q, V_q, gradients[i], prefactors[i]);
             }
         }
     }
     return;
 }
 
-double GBSWIntegral::computeVolume(const std::vector<OpenMM::Vec3>& atomPositions, const OpenMM::Vec3& r_q){
+double GBSWIntegral::computeVolume(const std::vector<OpenMM::Vec3>& atomCoordinates, const OpenMM::Vec3& r_q){
     double V = 1.0;
     double deltaR[ReferenceForce::LastDeltaRIndex];
     double deltaR_qj;
@@ -91,11 +121,11 @@ double GBSWIntegral::computeVolume(const std::vector<OpenMM::Vec3>& atomPosition
     double sw = _sw;
     double sw3 = sw*sw*sw;
     double dr, dr3;
-    for(int atomJ=0; atomJ<atomPositions.size(); ++atomJ){
+    for(int atomJ=0; atomJ<atomCoordinates.size(); ++atomJ){
         if (_periodic)
-            ReferenceForce::getDeltaRPeriodic(r_q, atomPositions[atomJ], _periodicBoxVectors, deltaR);
+            ReferenceForce::getDeltaRPeriodic(r_q, atomCoordinates[atomJ], _periodicBoxVectors, deltaR);
         else
-            ReferenceForce::getDeltaR(r_q, atomPositions[atomJ], deltaR);
+            ReferenceForce::getDeltaR(r_q, atomCoordinates[atomJ], deltaR);
         deltaR_qj = deltaR[ReferenceForce::RIndex];
         atomicRadii_j = (_atomicRadii[atomJ]+0.03)*0.9520;
         dr = deltaR_qj - atomicRadii_j;
@@ -111,7 +141,7 @@ double GBSWIntegral::computeVolume(const std::vector<OpenMM::Vec3>& atomPosition
     return V;
 }
 
-void GBSWIntegral::computeGradientPerQuad(const int atomI, const std::vector<OpenMM::Vec3>& atomPositions, 
+void GBSWIntegral::computeGradientPerQuad(const int atomI, const std::vector<OpenMM::Vec3>& atomCoordinates, 
         const OpenMM::Vec3& r_q, const double V_q, std::vector<OpenMM::Vec3>& gradients, const double prefactor){
     if(V_q == 0) return;
     double deltaR[ReferenceForce::LastDeltaRIndex];
@@ -123,12 +153,12 @@ void GBSWIntegral::computeGradientPerQuad(const int atomI, const std::vector<Ope
     double u_j;
     double duj_drq;
     OpenMM::Vec3 dV_drq;
-    for(int atomJ=0; atomJ<atomPositions.size(); ++atomJ){
+    for(int atomJ=0; atomJ<atomCoordinates.size(); ++atomJ){
         if(atomI==atomJ) continue;
         if (_periodic)
-            ReferenceForce::getDeltaRPeriodic(r_q, atomPositions[atomJ], _periodicBoxVectors, deltaR);
+            ReferenceForce::getDeltaRPeriodic(r_q, atomCoordinates[atomJ], _periodicBoxVectors, deltaR);
         else
-            ReferenceForce::getDeltaR(r_q, atomPositions[atomJ], deltaR);
+            ReferenceForce::getDeltaR(r_q, atomCoordinates[atomJ], deltaR);
         deltaR_qj = deltaR[ReferenceForce::RIndex];
         atomicRadii_j = (_atomicRadii[atomJ]+0.03)*0.9520;
         dr = deltaR_qj - atomicRadii_j;
