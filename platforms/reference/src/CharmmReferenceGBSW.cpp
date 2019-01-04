@@ -24,7 +24,7 @@ CharmmReferenceGBSW::CharmmReferenceGBSW(int numberOfAtoms){
     _dG_dbornR.resize(numberOfAtoms);
     _numberOfAtoms = numberOfAtoms;
     _electricConstant = -0.5*ONE_4PI_EPS0;
-    _r0 = 0.07;
+    _r0 = 0.05;
     _r1 = 2.0;
     int nRadialPoints = 24;
     int ruleLebedev = 4;
@@ -230,8 +230,8 @@ double CharmmReferenceGBSW::computeEnergyForces(const vector<Vec3>& atomCoordina
         */
     std::vector<double> bornRadii;
     bornRadii.resize(numberOfAtoms);
-    //computeBornRadii(atomCoordinates, partialCharges, bornRadii);
-    computeBornRadiiFast(atomCoordinates, partialCharges, bornRadii);
+    computeBornRadii(atomCoordinates, partialCharges, bornRadii);
+    //computeBornRadiiFast(atomCoordinates, partialCharges, bornRadii);
     _dG_dbornR.resize(numberOfAtoms, 0.0);
 
     for (int i = 0; i < numberOfAtoms; ++i){

@@ -36,8 +36,7 @@
 #include "openmm/CharmmGBMVForce.h"
 #include "openmm/Kernel.h"
 #include <utility>
-#include <set>
-#include <vector>
+#include <map>
 #include <string>
 
 namespace OpenMM {
@@ -49,6 +48,7 @@ namespace OpenMM {
 class CharmmGBMVForceImpl : public ForceImpl {
 public:
     CharmmGBMVForceImpl(const CharmmGBMVForce& owner);
+    ~CharmmGBMVForceImpl();
     void initialize(ContextImpl& context);
     const CharmmGBMVForce& getOwner() const {
         return owner;
@@ -57,9 +57,7 @@ public:
         // This force field doesn't update the state directly.
     }
     double calcForcesAndEnergy(ContextImpl& context, bool includeForces, bool includeEnergy, int groups);
-    std::map<std::string, double> getDefaultParameters() {
-        return std::map<std::string, double>(); // This force field doesn't define any parameters.
-    }
+    std::map<std::string, double> getDefaultParameters();
     std::vector<std::string> getKernelNames();
     void updateParametersInContext(ContextImpl& context);
 private:

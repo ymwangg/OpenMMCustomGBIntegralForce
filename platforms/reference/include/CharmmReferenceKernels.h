@@ -29,9 +29,14 @@
 #include "openmm/CharmmGBMVForce.h"
 #include "openmm/CharmmGBSWForce.h"
 #include "openmm/charmmKernels.h"
-#include "openmm/System.h"
-#include "openmm/Vec3.h"
+//#include "openmm/System.h"
 #include <vector>
+
+#include "ReferencePlatform.h"
+#include "SimTKOpenMMRealType.h"
+#include "ReferenceNeighborList.h"
+#include "lepton/CompiledExpression.h"
+#include "lepton/CustomFunction.h"
 
 
 namespace OpenMM {
@@ -69,10 +74,26 @@ public:
      * @param force      the CharmmGBMVForce to copy the parameters from
      */
     void copyParametersToContext(ContextImpl& context, const CharmmGBMVForce& force);
+    double validateIntegral(ContextImpl& context);
 private:
-    double validateIntegral(ContextImpl& context, bool includeForces, bool includeEnergy);
-    CharmmReferenceGBMV* gbmv;
-    std::vector<double> charges;
+    int numParticles;
+    bool isPeriodic;
+    double **particleParamArray;
+    double nonbondedCutoff;
+    std::vector<std::set<int> > exclusions;
+    std::vector<std::string> particleParameterNames, globalParameterNames, energyParamDerivNames, valueNames, integralNames;
+    std::vector<Lepton::CompiledExpression> valueExpressions;
+    std::vector<std::vector<Lepton::CompiledExpression> > valueDerivExpressions;
+    std::vector<std::vector<Lepton::CompiledExpression> > valueGradientExpressions;
+    std::vector<std::vector<Lepton::CompiledExpression> > valueParamDerivExpressions;
+    std::vector<OpenMM::CharmmGBMVForce::ComputationType> valueTypes;
+    std::vector<Lepton::CompiledExpression> energyExpressions;
+    std::vector<std::vector<Lepton::CompiledExpression> > energyDerivExpressions;
+    std::vector<std::vector<Lepton::CompiledExpression> > energyGradientExpressions;
+    std::vector<std::vector<Lepton::CompiledExpression> > energyParamDerivExpressions;
+    std::vector<OpenMM::CharmmGBMVForce::ComputationType> energyTypes;
+    NonbondedMethod nonbondedMethod;
+    NeighborList* neighborList;
     GBSWIntegral integral;
 };
 

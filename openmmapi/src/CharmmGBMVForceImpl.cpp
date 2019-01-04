@@ -30,24 +30,75 @@
  * -------------------------------------------------------------------------- */
 
 #include "openmm/OpenMMException.h"
-#include "openmm/internal/CharmmGBMVForceImpl.h"
 #include "openmm/internal/ContextImpl.h"
+#include "openmm/internal/CharmmGBMVForceImpl.h"
 #include "openmm/charmmKernels.h"
-#include <vector>
+#include <sstream>
 
 using namespace OpenMM;
+using std::map;
+using std::pair;
 using std::vector;
+using std::set;
+using std::string;
+using std::stringstream;
+
 
 CharmmGBMVForceImpl::CharmmGBMVForceImpl(const CharmmGBMVForce& owner) : owner(owner) {
 }
 
+CharmmGBMVForceImpl::~CharmmGBMVForceImpl(){
+}
+
 void CharmmGBMVForceImpl::initialize(ContextImpl& context) {
     kernel = context.getPlatform().createKernel(CalcCharmmGBMVForceKernel::Name(), context);
-    if (owner.getNumParticles() != context.getSystem().getNumParticles())
+
+    // Check for errors in the specification of parameters and exclusions.
+
+    const System& system = context.getSystem();
+    if (owner.getNumParticles() != system.getNumParticles())
         throw OpenMMException("CharmmGBMVForce must have exactly as many particles as the System it belongs to.");
+    vector<set<int> > exclusions(owner.getNumParticles());
+    vector<double> parameters;
+    int numParameters = owner.getNumPerParticleParameters();
+    for (int i = 0; i < owner.getNumParticles(); i++) {
+        owner.getParticleParameters(i, parameters);
+        if (parameters.size() != numParameters) {
+            stringstream msg;
+            msg << "CharmmGBMVForce: Wrong number of parameters for particle ";
+            msg << i;
+            throw OpenMMException(msg.str());
+        }
+    }
+    for (int i = 0; i < owner.getNumExclusions(); i++) {
+        int particle1, particle2;
+        owner.getExclusionParticles(i, particle1, particle2);
+        if (particle1 < 0 || particle1 >= owner.getNumParticles()) {
+            stringstream msg;
+            msg << "CharmmGBMVForce: Illegal particle index for an exclusion: ";
+            msg << particle1;
+            throw OpenMMException(msg.str());
+        }
+        if (particle2 < 0 || particle2 >= owner.getNumParticles()) {
+            stringstream msg;
+            msg << "CharmmGBMVForce: Illegal particle index for an exclusion: ";
+            msg << particle2;
+            throw OpenMMException(msg.str());
+        }
+        if (exclusions[particle1].count(particle2) > 0 || exclusions[particle2].count(particle1) > 0) {
+            stringstream msg;
+            msg << "CharmmGBMVForce: Multiple exclusions are specified for particles ";
+            msg << particle1;
+            msg << " and ";
+            msg << particle2;
+            throw OpenMMException(msg.str());
+        }
+        exclusions[particle1].insert(particle2);
+        exclusions[particle2].insert(particle1);
+    }
     if (owner.getNonbondedMethod() == CharmmGBMVForce::CutoffPeriodic) {
         Vec3 boxVectors[3];
-        context.getSystem().getDefaultPeriodicBoxVectors(boxVectors[0], boxVectors[1], boxVectors[2]);
+        system.getDefaultPeriodicBoxVectors(boxVectors[0], boxVectors[1], boxVectors[2]);
         double cutoff = owner.getCutoffDistance();
         if (cutoff > 0.5*boxVectors[0][0] || cutoff > 0.5*boxVectors[1][1] || cutoff > 0.5*boxVectors[2][2])
             throw OpenMMException("CharmmGBMVForce: The cutoff distance cannot be greater than half the periodic box size.");
@@ -61,10 +112,17 @@ double CharmmGBMVForceImpl::calcForcesAndEnergy(ContextImpl& context, bool inclu
     return 0.0;
 }
 
-std::vector<std::string> CharmmGBMVForceImpl::getKernelNames() {
-    std::vector<std::string> names;
+vector<string> CharmmGBMVForceImpl::getKernelNames() {
+    vector<string> names;
     names.push_back(CalcCharmmGBMVForceKernel::Name());
     return names;
+}
+
+map<string, double> CharmmGBMVForceImpl::getDefaultParameters() {
+    map<string, double> parameters;
+    for (int i = 0; i < owner.getNumGlobalParameters(); i++)
+        parameters[owner.getGlobalParameterName(i)] = owner.getGlobalParameterDefaultValue(i);
+    return parameters;
 }
 
 void CharmmGBMVForceImpl::updateParametersInContext(ContextImpl& context) {

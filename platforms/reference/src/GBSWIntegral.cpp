@@ -42,9 +42,9 @@ void GBSWIntegral::initialize(const OpenMM::System& system, const OpenMM::Charmm
     int numParticles = system.getNumParticles();
     _atomicRadii.resize(numParticles);
     for (int i = 0; i < numParticles; ++i) {
-        double charge, radius, scalingFactor;
-        force.getParticleParameters(i, charge, radius, scalingFactor);
-        _atomicRadii[i] = radius;
+        std::vector<double> param;
+        force.getParticleParameters(i, param);
+        _atomicRadii[i] = param[1];
     } 
     return;
 }

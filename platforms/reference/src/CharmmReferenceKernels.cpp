@@ -24,21 +24,21 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.      *
  * -------------------------------------------------------------------------- */
 
-#include "GBSWIntegral.h"
-#include "ReferenceNeighborList.h"
 #include "CharmmReferenceKernels.h"
 #include "CharmmReferenceGBMV.h"
 #include "CharmmReferenceGBSW.h"
-#include "ReferenceObc.h"
-#include "ReferencePlatform.h"
+#include "openmm/Context.h"
+#include "openmm/System.h"
 #include "openmm/internal/ContextImpl.h"
 #include "openmm/OpenMMException.h"
+#include "SimTKOpenMMUtilities.h"
+#include "GBSWIntegral.h"
+#include "ReferenceTabulatedFunction.h"
+#include "lepton/CustomFunction.h"
+#include "lepton/Operation.h"
+#include "lepton/Parser.h"
+#include "lepton/ParsedExpression.h"
 #include <iostream>
-
-#include <cmath>
-#ifdef _MSC_VER
-#include <windows.h>
-#endif
 
 using namespace OpenMM;
 using namespace std;
@@ -68,46 +68,228 @@ static Vec3* extractBoxVectors(ContextImpl& context) {
     return (Vec3*) data->periodicBoxVectors;
 }
 
+static map<string, double>& extractEnergyParameterDerivatives(ContextImpl& context) {
+    ReferencePlatform::PlatformData* data = reinterpret_cast<ReferencePlatform::PlatformData*>(context.getPlatformData());
+    return *((map<string, double>*) data->energyParameterDerivatives);
+}
+
+static int** allocateIntArray(int length, int width) {
+    int** array = new int*[length];
+    for (int i = 0; i < length; ++i)
+        array[i] = new int[width];
+    return array;
+}
+
+static double** allocateRealArray(int length, int width) {
+    double** array = new double*[length];
+    for (int i = 0; i < length; ++i) 
+        array[i] = new double[width];
+    return array;
+}
+
+static void disposeIntArray(int** array, int size) {
+    if (array) {
+        for (int i = 0; i < size; ++i)
+            delete[] array[i];
+        delete[] array;
+    }
+}
+
+static void disposeRealArray(double** array, int size) {
+    if (array) {
+        for (int i = 0; i < size; ++i) 
+            delete[] array[i];
+        delete[] array;
+    }    
+}
+/**
+ * Make sure an expression doesn't use any undefined variables.
+ */
+static void validateVariables(const Lepton::ExpressionTreeNode& node, const set<string>& variables) {
+    const Lepton::Operation& op = node.getOperation();
+    if (op.getId() == Lepton::Operation::VARIABLE && variables.find(op.getName()) == variables.end())
+        throw OpenMMException("Unknown variable in expression: "+op.getName());
+    for (auto& child : node.getChildren())
+        validateVariables(child, variables);
+}
+
 // ***************************************************************************
 
 ReferenceCalcCharmmGBMVForceKernel::~ReferenceCalcCharmmGBMVForceKernel() {
-    if(gbmv) delete gbmv;
+    disposeRealArray(particleParamArray, numParticles);
+    if (neighborList != NULL)
+        delete neighborList;
 }
 
 void ReferenceCalcCharmmGBMVForceKernel::initialize(const System& system, const CharmmGBMVForce& force) {
-    int numParticles = system.getNumParticles();
-    charges.resize(numParticles);
-    vector<double> atomicRadii(numParticles);
-    vector<double> scaleFactors(numParticles);
+    if(force.getNumVolumeIntegrals()>0)
+        integral.initialize(system,force);
+    /*
+    if (force.getNumComputedValues() > 0) {
+        string name, expression;
+        CharmmGBMVForce::ComputationType type;
+        force.getComputedValueParameters(0, name, expression, type);
+        if (type == CharmmGBMVForce::SingleParticle)
+            throw OpenMMException("ReferencePlatform requires that the first computed value for a CharmmGBMVForce be of type VolumeIntegral.");
+        for (int i = 1; i < force.getNumComputedValues(); i++) {
+            force.getComputedValueParameters(i, name, expression, type);
+            if (type != CharmmGBMVForce::SingleParticle)
+                throw OpenMMException("ReferencePlatform requires that a CharmmGBMVForce only have one computed value of type VolumeIntegral.");
+        }
+    }
+    */
+
+    // Record the exclusions.
+
+    numParticles = force.getNumParticles();
+    exclusions.resize(numParticles);
+    for (int i = 0; i < force.getNumExclusions(); i++) {
+        int particle1, particle2;
+        force.getExclusionParticles(i, particle1, particle2);
+        exclusions[particle1].insert(particle2);
+        exclusions[particle2].insert(particle1);
+    }
+
+   // Build the arrays.
+
+    // per particle parameters
+    int numPerParticleParameters = force.getNumPerParticleParameters();
+    particleParamArray = allocateRealArray(numParticles, numPerParticleParameters);
     for (int i = 0; i < numParticles; ++i) {
-        double charge, radius, scalingFactor;
-        force.getParticleParameters(i, charge, radius, scalingFactor);
-        charges[i] = charge;
-        atomicRadii[i] = radius;
-        scaleFactors[i] = scalingFactor;
-    }    
-    gbmv = new CharmmReferenceGBMV(numParticles);
-    gbmv->setAtomicRadii(atomicRadii);
-    gbmv->setScaledRadiusFactors(scaleFactors);
-    gbmv->setSolventDielectric(force.getSolventDielectric());
-    gbmv->setSoluteDielectric(force.getSoluteDielectric());
-    if (force.getNonbondedMethod() != CharmmGBMVForce::NoCutoff){
-        OpenMM::NeighborList* neighborList = new NeighborList();
-        gbmv->setUseCutoff(force.getCutoffDistance());
-        gbmv->setNeighborList(*neighborList);
-        if(force.getNonbondedMethod() == CharmmGBSWForce::CutoffPeriodic)
-            gbmv->setPeriodic();
+        vector<double> parameters;
+        force.getParticleParameters(i, parameters);
+        for (int j = 0; j < numPerParticleParameters; j++)
+            particleParamArray[i][j] = parameters[j];
     }
-    else {
-        OpenMM::NeighborList* neighborList = NULL;
-        gbmv->setNeighborList(*neighborList);
-        gbmv->setNoCutoff();
-        gbmv->setNoPeriodic();
+    for (int i = 0; i < numPerParticleParameters; i++)
+        particleParameterNames.push_back(force.getPerParticleParameterName(i));
+    for (int i = 0; i < force.getNumGlobalParameters(); i++)
+        globalParameterNames.push_back(force.getGlobalParameterName(i));
+
+
+    // nonbonded method
+    nonbondedMethod = CalcCharmmGBMVForceKernel::NonbondedMethod(force.getNonbondedMethod());
+    nonbondedCutoff = force.getCutoffDistance();
+    if (nonbondedMethod == NoCutoff)
+        neighborList = NULL;
+    else
+        neighborList = new NeighborList();
+
+    // Create custom functions for the tabulated functions.
+
+    map<string, Lepton::CustomFunction*> functions;
+    for (int i = 0; i < force.getNumFunctions(); i++)
+        functions[force.getTabulatedFunctionName(i)] = createReferenceTabulatedFunction(force.getTabulatedFunction(i));
+
+    // Parse the expressions for computed values.
+
+    valueDerivExpressions.resize(force.getNumComputedValues()+force.getNumVolumeIntegrals());
+    valueGradientExpressions.resize(force.getNumComputedValues());
+    valueParamDerivExpressions.resize(force.getNumComputedValues());
+    set<string> particleVariables, pairVariables;
+    pairVariables.insert("r");
+    particleVariables.insert("x");
+    particleVariables.insert("y");
+    particleVariables.insert("z");
+    for (int i = 0; i < numPerParticleParameters; i++) {
+        particleVariables.insert(particleParameterNames[i]);
+        pairVariables.insert(particleParameterNames[i]+"1");
+        pairVariables.insert(particleParameterNames[i]+"2");
     }
-    integral.initialize(system,force);
+    particleVariables.insert(globalParameterNames.begin(), globalParameterNames.end());
+    pairVariables.insert(globalParameterNames.begin(), globalParameterNames.end());
+
+    //add volume integral names
+    for(int i = 0; i < force.getNumVolumeIntegrals(); i++){
+        string name;
+        std::map<std::string,double> parameters;
+        force.getVolumeIntegralParameters(i, name, parameters);
+        integralNames.push_back(name);
+        particleVariables.insert(name);
+        pairVariables.insert(name+"1");
+        pairVariables.insert(name+"2");
+    }
+
+    for (int i = 0; i < force.getNumComputedValues(); i++) {
+        string name, expression;
+        CharmmGBMVForce::ComputationType type;
+        force.getComputedValueParameters(i, name, expression, type);
+        Lepton::ParsedExpression ex = Lepton::Parser::parse(expression, functions).optimize();
+        valueExpressions.push_back(ex.createCompiledExpression());
+        valueTypes.push_back(type);
+        valueNames.push_back(name);
+        valueGradientExpressions[i].push_back(ex.differentiate("x").createCompiledExpression());
+        valueGradientExpressions[i].push_back(ex.differentiate("y").createCompiledExpression());
+        valueGradientExpressions[i].push_back(ex.differentiate("z").createCompiledExpression());
+        for (int j = 0; j < force.getNumVolumeIntegrals(); j++){
+            valueDerivExpressions[i].push_back(ex.differentiate(integralNames[j]).createCompiledExpression());
+        }
+        for (int j = 0; j < i; j++)
+            valueDerivExpressions[i].push_back(ex.differentiate(valueNames[j]).createCompiledExpression());
+        validateVariables(ex.getRootNode(), particleVariables);
+        for (int j = 0; j < force.getNumEnergyParameterDerivatives(); j++) {
+            string param = force.getEnergyParameterDerivativeName(j);
+            energyParamDerivNames.push_back(param);
+            valueParamDerivExpressions[i].push_back(ex.differentiate(param).createCompiledExpression());
+        }
+        particleVariables.insert(name);
+        pairVariables.insert(name+"1");
+        pairVariables.insert(name+"2");
+    }
+
+    // Parse the expressions for energy terms.
+
+    energyDerivExpressions.resize(force.getNumEnergyTerms()+force.getNumVolumeIntegrals());
+    energyGradientExpressions.resize(force.getNumEnergyTerms());
+    energyParamDerivExpressions.resize(force.getNumEnergyTerms());
+    for (int i = 0; i < force.getNumEnergyTerms(); i++) {
+        string expression;
+        CharmmGBMVForce::ComputationType type;
+        force.getEnergyTermParameters(i, expression, type);
+        Lepton::ParsedExpression ex = Lepton::Parser::parse(expression, functions).optimize();
+        energyExpressions.push_back(ex.createCompiledExpression());
+        energyTypes.push_back(type);
+        if (type != CharmmGBMVForce::SingleParticle)
+            energyDerivExpressions[i].push_back(ex.differentiate("r").createCompiledExpression());
+        for (int j = 0; j < force.getNumVolumeIntegrals(); j++){
+            if (type == CharmmGBMVForce::SingleParticle) {
+                energyDerivExpressions[i].push_back(ex.differentiate(integralNames[j]).createCompiledExpression());
+                energyGradientExpressions[i].push_back(ex.differentiate("x").createCompiledExpression());
+                energyGradientExpressions[i].push_back(ex.differentiate("y").createCompiledExpression());
+                energyGradientExpressions[i].push_back(ex.differentiate("z").createCompiledExpression());
+                validateVariables(ex.getRootNode(), particleVariables);
+            }    
+            else {
+                energyDerivExpressions[i].push_back(ex.differentiate(integralNames[j]+"1").createCompiledExpression());
+                energyDerivExpressions[i].push_back(ex.differentiate(integralNames[j]+"2").createCompiledExpression());
+                validateVariables(ex.getRootNode(), pairVariables);
+            }    
+
+        }
+        for (int j = 0; j < force.getNumComputedValues(); j++) {
+            if (type == CharmmGBMVForce::SingleParticle) {
+                energyDerivExpressions[i].push_back(ex.differentiate(valueNames[j]).createCompiledExpression());
+                energyGradientExpressions[i].push_back(ex.differentiate("x").createCompiledExpression());
+                energyGradientExpressions[i].push_back(ex.differentiate("y").createCompiledExpression());
+                energyGradientExpressions[i].push_back(ex.differentiate("z").createCompiledExpression());
+                validateVariables(ex.getRootNode(), particleVariables);
+            }    
+            else {
+                energyDerivExpressions[i].push_back(ex.differentiate(valueNames[j]+"1").createCompiledExpression());
+                energyDerivExpressions[i].push_back(ex.differentiate(valueNames[j]+"2").createCompiledExpression());
+                validateVariables(ex.getRootNode(), pairVariables);
+            }    
+        }    
+        for (int j = 0; j < force.getNumEnergyParameterDerivatives(); j++) 
+            energyParamDerivExpressions[i].push_back(ex.differentiate(force.getEnergyParameterDerivativeName(j)).createCompiledExpression());
+    }   
+    // Delete the custom functions.
+
+    for (auto& function : functions)
+        delete function.second;
 }
 
-double ReferenceCalcCharmmGBMVForceKernel::validateIntegral(ContextImpl& context, bool includeForces, bool includeEnergy) {
+double ReferenceCalcCharmmGBMVForceKernel::validateIntegral(ContextImpl& context){
     int atomId = 0;
     vector<Vec3> posData = extractPositions(context);
     std::vector<std::vector<OpenMM::Vec3> > gradients;
@@ -132,7 +314,6 @@ double ReferenceCalcCharmmGBMVForceKernel::validateIntegral(ContextImpl& context
     int n=0;
     OpenMM::Vec3 delta;
     for(int i=0; i<orders.size(); ++i){
-        cout<<"value "<<i<<endl;
         for(int j=0; j<posData.size(); ++j){
             cout<<gradients[i][j]<<" "<<gradientsFD[i][j]<<endl;
             delta = gradients[i][j] - gradientsFD[i][j];
@@ -148,6 +329,7 @@ double ReferenceCalcCharmmGBMVForceKernel::execute(ContextImpl& context, bool in
     vector<Vec3>& posData = extractPositions(context);
     vector<Vec3>& forceData = extractForces(context);
 
+    /*
     int valueId = 1;
     int atomId = 0;
     int coorId = 2;
@@ -161,39 +343,49 @@ double ReferenceCalcCharmmGBMVForceKernel::execute(ContextImpl& context, bool in
     cout<<(values2[valueId]-values1[valueId])/1e-6<<endl;
     cout<<gradients[valueId][atomId][coorId]<<endl;
 
-    validateIntegral(context,includeForces,includeEnergy);
+    */
+    //validateIntegral(context);
 
-    return 0.0;
-
-    if (gbmv->getUseCutoff() && gbmv->getPeriodic())
-        gbmv->setPeriodic(extractBoxVectors(context));
-    if (gbmv->getUseCutoff()) {
+    double energy = 0;
+    int numIntegrals = integralNames.size();
+    CharmmReferenceGBMV ixn(numParticles, integralNames, integral, valueExpressions,
+            valueDerivExpressions, valueGradientExpressions, valueParamDerivExpressions,
+            valueNames, valueTypes,energyExpressions, energyDerivExpressions, 
+            energyGradientExpressions, energyParamDerivExpressions, energyTypes, particleParameterNames);
+    bool periodic = (nonbondedMethod == CutoffPeriodic);
+    if (periodic)
+        ixn.setPeriodic(extractBoxVectors(context));
+    if (nonbondedMethod != NoCutoff) {
         vector<set<int> > empty(context.getSystem().getNumParticles()); // Don't omit exclusions from the neighbor list
-        OpenMM::NeighborList* neighborList = gbmv->getNeighborList();
-        computeNeighborListVoxelHash(*neighborList, context.getSystem().getNumParticles(), posData, empty, extractBoxVectors(context), gbmv->getPeriodic(), gbmv->getCutoffDistance(), 0.0);
+        computeNeighborListVoxelHash(*neighborList, numParticles, posData, empty, extractBoxVectors(context), periodic, nonbondedCutoff, 0.0);
+        ixn.setUseCutoff(nonbondedCutoff, *neighborList);
     }
-    return gbmv->computeEnergyForces(posData, charges, forceData);
+    map<string, double> globalParameters;
+    for (auto& name : globalParameterNames)
+        globalParameters[name] = context.getParameter(name);
+    vector<double> energyParamDerivValues(energyParamDerivNames.size()+1, 0.0);
+
+    ixn.calculateIxn(posData, particleParamArray, exclusions, globalParameters, forceData, includeEnergy ? &energy : NULL, &energyParamDerivValues[0], context);
+    map<string, double>& energyParamDerivs = extractEnergyParameterDerivatives(context);
+    for (int i = 0; i < energyParamDerivNames.size(); i++)
+        energyParamDerivs[energyParamDerivNames[i]] += energyParamDerivValues[i];
+    return energy;
 }
 
 void ReferenceCalcCharmmGBMVForceKernel::copyParametersToContext(ContextImpl& context, const CharmmGBMVForce& force) {
-    int numParticles = force.getNumParticles();
-    if (numParticles != gbmv->getAtomicRadii().size())
+    if (numParticles != force.getNumParticles())
         throw OpenMMException("updateParametersInContext: The number of particles has changed");
 
     // Record the values.
 
-    vector<double> atomicRadii(numParticles);
-    vector<double> scaleFactors(numParticles);
+    int numParameters = force.getNumPerParticleParameters();
+    vector<double> params;
     for (int i = 0; i < numParticles; ++i) {
-        double charge, radius, scalingFactor;
-        force.getParticleParameters(i, charge, radius, scalingFactor);
-        charges[i] = charge;
-        atomicRadii[i] = radius;
-        scaleFactors[i] = scalingFactor;
+        vector<double> parameters;
+        force.getParticleParameters(i, parameters);
+        for (int j = 0; j < numParameters; j++)
+            particleParamArray[i][j] = parameters[j];
     }
-    gbmv->setAtomicRadii(atomicRadii);
-    gbmv->setScaledRadiusFactors(scaleFactors);
-    return;
 }
 
 // ***************************************************************************
