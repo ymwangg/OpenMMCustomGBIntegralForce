@@ -6,6 +6,7 @@
 #include "GBSWIntegral.h"
 #include "openmm/OpenMMException.h"
 
+
 using namespace::OpenMM;
 using namespace::std;
 

@@ -93,7 +93,7 @@ private:
     std::vector<OpenMM::CharmmGBMVForce::ComputationType> energyTypes;
     NonbondedMethod nonbondedMethod;
     NeighborList* neighborList;
-    CustomGBIntegral* integralMethod;
+    GBSWIntegral* integralMethod;
 };
 
 /**

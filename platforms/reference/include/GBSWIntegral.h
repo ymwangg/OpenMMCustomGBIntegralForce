@@ -4,9 +4,8 @@
 #include "openmm/System.h"
 #include "openmm/CharmmGBMVForce.h"
 #include "openmm/internal/ContextImpl.h"
-#include "CustomGBIntegral.h"
 namespace OpenMM{
-class GBSWIntegral : public CustomGBIntegral {
+class GBSWIntegral {
     public:
         GBSWIntegral();
         void initialize(const OpenMM::System& system, const CharmmGBMVForce& force);
