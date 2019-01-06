@@ -350,7 +350,10 @@ double ReferenceCalcCharmmGBMVForceKernel::execute(ContextImpl& context, bool in
         globalParameters[name] = context.getParameter(name);
     vector<double> energyParamDerivValues(energyParamDerivNames.size()+1, 0.0);
 
+    integralMethod->BeforeComputation(context, posData);
     ixn.calculateIxn(posData, particleParamArray, exclusions, globalParameters, forceData, includeEnergy ? &energy : NULL, &energyParamDerivValues[0], context);
+    integralMethod->FinishComputation(context, posData);
+
     map<string, double>& energyParamDerivs = extractEnergyParameterDerivatives(context);
     for (int i = 0; i < energyParamDerivNames.size(); i++)
         energyParamDerivs[energyParamDerivNames[i]] += energyParamDerivValues[i];
