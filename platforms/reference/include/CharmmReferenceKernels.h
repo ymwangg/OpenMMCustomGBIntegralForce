@@ -25,6 +25,8 @@
 #ifndef __CharmmReferenceKernels_H__
 #define __CharmmReferenceKernels_H__
 
+#include "CharmmReferenceGBMV.h"
+#include "GBMVIntegralTypeI.h"
 #include "GBSWIntegral.h"
 #include "openmm/CharmmGBMVForce.h"
 #include "openmm/CharmmGBSWForce.h"
@@ -93,7 +95,7 @@ private:
     std::vector<OpenMM::CharmmGBMVForce::ComputationType> energyTypes;
     NonbondedMethod nonbondedMethod;
     NeighborList* neighborList;
-    GBSWIntegral* integralMethod;
+    INTEGRAL* integralMethod;
 };
 
 /**

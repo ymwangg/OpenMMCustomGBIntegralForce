@@ -22,7 +22,7 @@ using namespace OpenMM;
    --------------------------------------------------------------------------------------- */
 
 CharmmReferenceGBMV::CharmmReferenceGBMV(const int numberOfAtoms, const std::vector<std::string>& integralNames, 
-                     GBSWIntegral& integral,
+                     INTEGRAL& integral,
                      const vector<Lepton::CompiledExpression>& valueExpressions,
                      const vector<vector<Lepton::CompiledExpression> > valueDerivExpressions,
                      const vector<vector<Lepton::CompiledExpression> > valueGradientExpressions,

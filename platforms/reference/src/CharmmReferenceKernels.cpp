@@ -32,6 +32,7 @@
 #include "openmm/internal/ContextImpl.h"
 #include "openmm/OpenMMException.h"
 #include "SimTKOpenMMUtilities.h"
+#include "GBMVIntegralTypeI.h"
 #include "GBSWIntegral.h"
 #include "ReferenceTabulatedFunction.h"
 #include "lepton/CustomFunction.h"
@@ -122,7 +123,7 @@ ReferenceCalcCharmmGBMVForceKernel::~ReferenceCalcCharmmGBMVForceKernel() {
 }
 
 void ReferenceCalcCharmmGBMVForceKernel::initialize(const System& system, const CharmmGBMVForce& force) {
-    integralMethod = new GBSWIntegral();
+    integralMethod = new INTEGRAL();
     if(force.getNumGBIntegrals()>0)
         integralMethod->initialize(system,force);
     /*
@@ -292,13 +293,15 @@ void ReferenceCalcCharmmGBMVForceKernel::initialize(const System& system, const 
 double ReferenceCalcCharmmGBMVForceKernel::validateIntegral(ContextImpl& context){
     int atomId = 0;
     vector<Vec3> posData = extractPositions(context);
+    integralMethod->BeforeComputation(context, posData);
+
     std::vector<std::vector<OpenMM::Vec3> > gradients;
     std::vector<std::vector<OpenMM::Vec3> > gradientsFD;
-    std::vector<int> orders = {4};
-    gradientsFD.resize(orders.size(),std::vector<OpenMM::Vec3>(posData.size()));
     double d=1e-6;
     std::vector<double> values1;
     integralMethod->evaluate(atomId, context, posData, values1, gradients, true);
+    cout<<values1[0]<<" "<<values1[1]<<endl;
+    gradientsFD.resize(values1.size(),std::vector<OpenMM::Vec3>(posData.size()));
     for(int i=0; i<posData.size(); ++i){
         for(int k=0; k<3; ++k){
             std::vector<double> values2;
@@ -313,7 +316,7 @@ double ReferenceCalcCharmmGBMVForceKernel::validateIntegral(ContextImpl& context
     double error = 0.0;
     int n=0;
     OpenMM::Vec3 delta;
-    for(int i=0; i<orders.size(); ++i){
+    for(int i=0; i<values1.size(); ++i){
         for(int j=0; j<posData.size(); ++j){
             cout<<gradients[i][j]<<" "<<gradientsFD[i][j]<<endl;
             delta = gradients[i][j] - gradientsFD[i][j];
