@@ -1,8 +1,8 @@
 #ifndef __CharmmReferenceGBMV_H__
 #define __CharmmReferenceGBMV_H__
 
-#define INTEGRAL GBMVIntegralTypeI
-//#define INTEGRAL GBSWIntegral
+//#define INTEGRAL GBMVIntegralTypeI
+#define INTEGRAL GBSWIntegral
 
 #include "ReferenceNeighborList.h"
 #include "openmm/internal/CompiledExpressionSet.h"

@@ -250,14 +250,14 @@ void ReferenceCalcCharmmGBMVForceKernel::initialize(const System& system, const 
         Lepton::ParsedExpression ex = Lepton::Parser::parse(expression, functions).optimize();
         energyExpressions.push_back(ex.createCompiledExpression());
         energyTypes.push_back(type);
+        energyGradientExpressions[i].push_back(ex.differentiate("x").createCompiledExpression());
+        energyGradientExpressions[i].push_back(ex.differentiate("y").createCompiledExpression());
+        energyGradientExpressions[i].push_back(ex.differentiate("z").createCompiledExpression());
         if (type != CharmmGBMVForce::SingleParticle)
             energyDerivExpressions[i].push_back(ex.differentiate("r").createCompiledExpression());
         for (int j = 0; j < force.getNumGBIntegrals(); j++){
             if (type == CharmmGBMVForce::SingleParticle) {
                 energyDerivExpressions[i].push_back(ex.differentiate(integralNames[j]).createCompiledExpression());
-                energyGradientExpressions[i].push_back(ex.differentiate("x").createCompiledExpression());
-                energyGradientExpressions[i].push_back(ex.differentiate("y").createCompiledExpression());
-                energyGradientExpressions[i].push_back(ex.differentiate("z").createCompiledExpression());
                 validateVariables(ex.getRootNode(), particleVariables);
             }    
             else {
@@ -270,9 +270,6 @@ void ReferenceCalcCharmmGBMVForceKernel::initialize(const System& system, const 
         for (int j = 0; j < force.getNumComputedValues(); j++) {
             if (type == CharmmGBMVForce::SingleParticle) {
                 energyDerivExpressions[i].push_back(ex.differentiate(valueNames[j]).createCompiledExpression());
-                energyGradientExpressions[i].push_back(ex.differentiate("x").createCompiledExpression());
-                energyGradientExpressions[i].push_back(ex.differentiate("y").createCompiledExpression());
-                energyGradientExpressions[i].push_back(ex.differentiate("z").createCompiledExpression());
                 validateVariables(ex.getRootNode(), particleVariables);
             }    
             else {
@@ -353,9 +350,9 @@ double ReferenceCalcCharmmGBMVForceKernel::execute(ContextImpl& context, bool in
         globalParameters[name] = context.getParameter(name);
     vector<double> energyParamDerivValues(energyParamDerivNames.size()+1, 0.0);
 
-    integralMethod->BeforeComputation(context, posData);
+    if(numIntegrals>0) integralMethod->BeforeComputation(context, posData);
     ixn.calculateIxn(posData, particleParamArray, exclusions, globalParameters, forceData, includeEnergy ? &energy : NULL, &energyParamDerivValues[0], context);
-    integralMethod->FinishComputation(context, posData);
+    if(numIntegrals>0) integralMethod->FinishComputation(context, posData);
 
     map<string, double>& energyParamDerivs = extractEnergyParameterDerivatives(context);
     for (int i = 0; i < energyParamDerivNames.size(); i++)
