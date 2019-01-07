@@ -24,6 +24,10 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.      *
  * -------------------------------------------------------------------------- */
 
+#include "CustomGBIntegral.h"
+#include "GBMVIntegralTypeI.h"
+#include "GBMVIntegralTypeII.h"
+#include "GBSWIntegral.h"
 #include "CharmmReferenceKernels.h"
 #include "CharmmReferenceGBMV.h"
 #include "CharmmReferenceGBSW.h"
@@ -32,8 +36,6 @@
 #include "openmm/internal/ContextImpl.h"
 #include "openmm/OpenMMException.h"
 #include "SimTKOpenMMUtilities.h"
-#include "GBMVIntegralTypeI.h"
-#include "GBSWIntegral.h"
 #include "ReferenceTabulatedFunction.h"
 #include "lepton/CustomFunction.h"
 #include "lepton/Operation.h"
@@ -123,7 +125,12 @@ ReferenceCalcCharmmGBMVForceKernel::~ReferenceCalcCharmmGBMVForceKernel() {
 }
 
 void ReferenceCalcCharmmGBMVForceKernel::initialize(const System& system, const CharmmGBMVForce& force) {
-    integralMethod = new INTEGRAL();
+    CharmmGBMVForce::GBIntegralType GBType = force.getGBIntegralType();
+    switch (GBType){
+        case CharmmGBMVForce::GBSWIntegral : integralMethod = new GBSWIntegral(); break;
+        case CharmmGBMVForce::GBMVIntegralTypeI : integralMethod = new GBMVIntegralTypeI(); break;
+        case CharmmGBMVForce::GBMVIntegralTypeII : integralMethod = new GBMVIntegralTypeII(); break;
+    }
     if(force.getNumGBIntegrals()>0)
         integralMethod->initialize(system,force);
     /*

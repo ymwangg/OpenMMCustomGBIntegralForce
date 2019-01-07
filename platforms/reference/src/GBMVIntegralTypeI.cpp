@@ -4,7 +4,6 @@
 #include "Units.h"
 #include "Vec3.h"
 #include "GBMVIntegralTypeI.h"
-#include "GBSWIntegral.h"
 #include "openmm/OpenMMException.h"
 
 

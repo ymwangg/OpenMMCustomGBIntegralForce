@@ -97,10 +97,10 @@ public:
     };
 
     enum GBIntegralType {
-        GBSW = 0,
-        GBMV1 = 1,
-        GBMV2 = 2,
-        Custom = 3,
+        GBSWIntegral = 0,
+        GBMVIntegralTypeI = 1,
+        GBMVIntegralTypeII = 2,
+        CustomIntegral = 3,
     };
     /**
      * Create a CharmmGBMVForce.
@@ -333,6 +333,8 @@ public:
     void getGBIntegralParameters(int index, std::string& name) const;
 
     void setGBIntegralType(GBIntegralType type);
+    
+    CharmmGBMVForce::GBIntegralType getGBIntegralType() const;
 
     void setGBIntegralParameters(int index, const std::string& name, std::vector<int> parametersInt, const std::vector<double> parametersReal);
 

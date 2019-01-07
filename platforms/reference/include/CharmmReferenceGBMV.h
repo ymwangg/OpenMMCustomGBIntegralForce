@@ -2,13 +2,13 @@
 #define __CharmmReferenceGBMV_H__
 
 //#define INTEGRAL GBMVIntegralTypeI
-#define INTEGRAL GBSWIntegral
+//#define INTEGRAL GBSWIntegral
+#define INTEGRAL CustomGBIntegral
 
+#include "CustomGBIntegral.h"
 #include "ReferenceNeighborList.h"
 #include "openmm/internal/CompiledExpressionSet.h"
 #include "openmm/CharmmGBMVForce.h"
-#include "GBSWIntegral.h"
-#include "GBMVIntegralTypeI.h"
 #include <map>
 #include <set>
 #include <vector>

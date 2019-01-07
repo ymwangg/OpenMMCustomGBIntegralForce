@@ -2,6 +2,7 @@
 #include <sstream>
 
 
+#include "CustomGBIntegral.h"
 #include "SimTKOpenMMUtilities.h"
 #include "ReferenceForce.h"
 #include "CharmmReferenceGBMV.h"

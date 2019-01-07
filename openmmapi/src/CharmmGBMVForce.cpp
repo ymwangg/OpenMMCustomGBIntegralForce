@@ -48,7 +48,7 @@ using std::string;
 using std::stringstream;
 using std::vector;
 
-CharmmGBMVForce::CharmmGBMVForce() : nonbondedMethod(NoCutoff), cutoffDistance(1.0) {
+CharmmGBMVForce::CharmmGBMVForce() : nonbondedMethod(NoCutoff), cutoffDistance(1.0), integralType(CharmmGBMVForce::GBSWIntegral) {
 }
 
 CharmmGBMVForce::~CharmmGBMVForce() {
@@ -179,6 +179,10 @@ void CharmmGBMVForce::getGBIntegralParameters(int index, std::string& name) cons
 
 void CharmmGBMVForce::setGBIntegralType(GBIntegralType type){
     integralType = type;
+}
+
+CharmmGBMVForce::GBIntegralType CharmmGBMVForce::getGBIntegralType() const{
+    return integralType;
 }
 
 void CharmmGBMVForce::setComputedValueParameters(int index, const std::string& name, const std::string& expression, ComputationType type) {

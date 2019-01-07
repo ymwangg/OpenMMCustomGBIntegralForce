@@ -1,13 +1,16 @@
 #ifndef _GBSWIntegral_H_
 #define _GBSWIntegral_H_
 
+#include "CustomGBIntegral.h"
 #include "openmm/System.h"
 #include "openmm/CharmmGBMVForce.h"
 #include "openmm/internal/ContextImpl.h"
 namespace OpenMM{
-class GBSWIntegral {
+class GBSWIntegral : public CustomGBIntegral{
     public:
         GBSWIntegral();
+        ~GBSWIntegral(){
+        }
         void initialize(const OpenMM::System& system, const CharmmGBMVForce& force);
         void evaluate(const int atomI, OpenMM::ContextImpl& context, const std::vector<OpenMM::Vec3>& atomCoordinates, std::vector<double>& values, std::vector<std::vector<OpenMM::Vec3> >& gradients, const bool includeGradient = true);
         void BeforeComputation(ContextImpl& context, const std::vector<OpenMM::Vec3>& atomCoordinates);

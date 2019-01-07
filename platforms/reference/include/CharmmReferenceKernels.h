@@ -25,9 +25,8 @@
 #ifndef __CharmmReferenceKernels_H__
 #define __CharmmReferenceKernels_H__
 
+#include "CustomGBIntegral.h"
 #include "CharmmReferenceGBMV.h"
-#include "GBMVIntegralTypeI.h"
-#include "GBSWIntegral.h"
 #include "openmm/CharmmGBMVForce.h"
 #include "openmm/CharmmGBSWForce.h"
 #include "openmm/charmmKernels.h"
