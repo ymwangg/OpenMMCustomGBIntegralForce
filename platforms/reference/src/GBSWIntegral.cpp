@@ -51,8 +51,8 @@ GBSWIntegral::GBSWIntegral(){
     }  
 
     //lookup table parameters
-    _lookupTableBufferLength = 0.20; //0.20 nm
-    _lookupTableGridLength = 0.15; //0.15 nm
+    setLookupTableGridLength(0.15); //0.15nm
+    setLookupTableBufferLength(0.20+_sw); //0.20nm
 }
 
 void GBSWIntegral::initialize(const OpenMM::System& system, const OpenMM::CharmmGBMVForce& force){
@@ -92,6 +92,7 @@ void GBSWIntegral::initialize(const OpenMM::System& system, const OpenMM::Charmm
 }
 
 void GBSWIntegral::setBoxVectors(OpenMM::Vec3* vectors){
+    setPeriodic(vectors); //set the periodic box vectors of the inherited class CustomGBIntegral
     _periodicBoxVectors[0] = vectors[0];
     _periodicBoxVectors[1] = vectors[1];
     _periodicBoxVectors[2] = vectors[2];
@@ -119,7 +120,8 @@ void GBSWIntegral::evaluate(const int atomI, ContextImpl& context, const std::ve
         double radius_q = _quad[q][3];
         double w_q = _quad[q][4];
 #if USE_LOOKUP_TABLE
-        vector<int> atomList = getLookupTableAtomList(r_q);
+        vector<int> atomList; 
+        getLookupTableAtomList(r_q, atomList);
         double V_q = computeVolumeFromLookupTable(atomCoordinates, r_q, atomList);
 #else
         double V_q = computeVolume(atomCoordinates, r_q);
@@ -279,104 +281,4 @@ void GBSWIntegral::computeGradientPerQuadFromLookupTable(const int atomI, const 
         gradients[atomJ] -= dV_drq;
     }
     return;
-}
-
-void GBSWIntegral::computeLookupTable(const std::vector<OpenMM::Vec3>& atomCoordinates){
-    //_lookupTable;
-    //  
-    //_r1;
-    OpenMM::Vec3 minCoordinate(atomCoordinates[0]);
-    OpenMM::Vec3 maxCoordinate(atomCoordinates[0]);
-    double maxR = 0.0;
-    for(int atomI=0; atomI<_numParticles; ++atomI){
-        for(int i=0; i<3; ++i){
-            minCoordinate[i] = min(minCoordinate[i], atomCoordinates[atomI][i]);
-            maxCoordinate[i] = max(maxCoordinate[i], atomCoordinates[atomI][i]);
-        }   
-        maxR = max(maxR, _atomicRadii[atomI]);
-    }   
-    double paddingLength = _lookupTableBufferLength + maxR + _sw +
-        sqrt(3.0)/2.0*_lookupTableGridLength + 1e-6;
-    int totalNumberOfGridPoints = 1;
-    for(int i=0; i<3; ++i){
-        minCoordinate[i] -= paddingLength;
-        maxCoordinate[i] += paddingLength;
-        double length = maxCoordinate[i]-minCoordinate[i];
-        _lookupTableNumberOfGridPoints[i] = static_cast<int>(
-                ceil(length/_lookupTableGridLength))+1;
-        if(length > 1000)
-            throw OpenMM::OpenMMException("CharmmGBMVForce: GBSWIntegral lookup table dimension is too large, check atom positions!");
-        _lookupTableMinCoordinate[i] = minCoordinate[i];
-        _lookupTableMaxCoordinate[i] = minCoordinate[i]+(_lookupTableNumberOfGridPoints[i]-1)*_lookupTableGridLength;
-        totalNumberOfGridPoints *= _lookupTableNumberOfGridPoints[i];
-        //cout<<minCoordinate[i]<<" "<<maxCoordinate[i]<<" "<<_lookupTableNumberOfGridPoints[i]<<endl;
-    }   
-    int n_x = _lookupTableNumberOfGridPoints[0];
-    int n_y = _lookupTableNumberOfGridPoints[1];
-    int n_z = _lookupTableNumberOfGridPoints[2];
-    _lookupTable.clear();
-    _lookupTable.resize(totalNumberOfGridPoints,vector<int>());
-    for(int atomI=0; atomI<_numParticles; ++atomI){
-        OpenMM::Vec3 coor = atomCoordinates[atomI];
-        int beginLookupTableIndex[3];
-        int endLookupTableIndex[3];
-        for(int i=0; i<3; ++i){
-            beginLookupTableIndex[i] = floor(
-                    (coor[i]-paddingLength-_lookupTableMinCoordinate[i])/_lookupTableGridLength);
-            endLookupTableIndex[i] = ceil(
-                    (coor[i]+paddingLength-_lookupTableMinCoordinate[i])/_lookupTableGridLength);
-        }
-        for(int i=beginLookupTableIndex[0]; i<=endLookupTableIndex[0]; ++i){ //x
-            for(int j=beginLookupTableIndex[1]; j<=endLookupTableIndex[1]; ++j){ //y
-                for(int k=beginLookupTableIndex[2]; k<=endLookupTableIndex[2]; ++k){ //z
-                    int idx = i*n_y*n_z + j*n_z + k; //calculate grid idx
-                    OpenMM::Vec3 gridPoint(_lookupTableMinCoordinate[0]+i*_lookupTableGridLength,
-                            _lookupTableMinCoordinate[1]+j*_lookupTableGridLength,
-                            _lookupTableMinCoordinate[2]+k*_lookupTableGridLength);
-                    OpenMM::Vec3 diff = gridPoint - coor;
-                    if(sqrt(diff.dot(diff)) < paddingLength){
-                        _lookupTable[idx].push_back(atomI);
-                    }
-                }
-            }
-        }
-    }
-}
-
-std::vector<int> GBSWIntegral::getLookupTableAtomList(OpenMM::Vec3 point){
-    vector<int> atomList;
-    int nx = _lookupTableNumberOfGridPoints[0];
-    int ny = _lookupTableNumberOfGridPoints[1];
-    int nz = _lookupTableNumberOfGridPoints[2];
-    int idx[3];
-    if(_periodic){
-        for(int i=0; i<3; ++i){
-            if(point[i] < _lookupTableMinCoordinate[i])
-                point += _periodicBoxVectors[i];
-            if(point[i] > _lookupTableMaxCoordinate[i])
-                point -= _periodicBoxVectors[i];
-        }
-        for(int i=0; i<3; ++i){
-            //if point is still outside of the lookupTable grid
-            if((point[i] < _lookupTableMinCoordinate[i]) ||
-                    (point[i] > _lookupTableMaxCoordinate[i])){
-                return atomList;
-            }
-            idx[i] = static_cast<int>(floor(
-                        (point[i]-_lookupTableMinCoordinate[i]) / _lookupTableGridLength));
-        }
-    }else{
-        for(int i=0; i<3; ++i){
-            //if point is outside of the lookupTable grid
-            if((point[i] < _lookupTableMinCoordinate[i]) ||
-                    (point[i] > _lookupTableMaxCoordinate[i])){
-                return atomList;
-            }
-            idx[i] = static_cast<int>(floor(
-                        (point[i]-_lookupTableMinCoordinate[i]) / _lookupTableGridLength));
-        }
-    }
-    int lookupTableIdx = idx[0]*(ny*nz) + idx[1]*nz + idx[2];
-    atomList = _lookupTable[lookupTableIdx];
-    return atomList;
 }

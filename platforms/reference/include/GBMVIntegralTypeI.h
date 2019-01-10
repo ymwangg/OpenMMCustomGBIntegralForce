@@ -17,8 +17,6 @@ class GBMVIntegralTypeI : public CustomGBIntegral {
         void FinishComputation(ContextImpl& context, const std::vector<OpenMM::Vec3>& atomCoordinates);
     private:
         void setBoxVectors(OpenMM::Vec3* vectors);
-        void computeLookupTable(const std::vector<OpenMM::Vec3>& atomCoordinates);
-        std::vector<int> getLookupTableAtomList(OpenMM::Vec3 point);
         double computeVolumeFromLookupTable(const std::vector<OpenMM::Vec3>& atomCoordinates, const OpenMM::Vec3& r_q, const std::vector<int>& atomList);
         void computeGradientPerQuadFromLookupTable(const int atomI, const std::vector<OpenMM::Vec3>& atomCoordinates,const OpenMM::Vec3& r_q, const double V_q, std::vector<OpenMM::Vec3>& gradients, const double prefactor, const std::vector<int>& atomList);
 
@@ -27,20 +25,13 @@ class GBMVIntegralTypeI : public CustomGBIntegral {
         std::vector<int> _orders;
         std::vector<std::vector<double> > _quad;
         std::vector<double> _atomicRadii;
-        bool _periodic;
         double _r0;
         double _r1;
         double _gamma0;
         double _lambda;
         double _beta;
+        bool _periodic;
         OpenMM::Vec3 _periodicBoxVectors[3];
-
-        std::vector<std::vector<int>> _lookupTable;
-        double _lookupTableMinCoordinate[3];
-        double _lookupTableMaxCoordinate[3];
-        double _lookupTableGridLength;
-        double _lookupTableBufferLength;
-        int _lookupTableNumberOfGridPoints[3];
 };
 }
 
