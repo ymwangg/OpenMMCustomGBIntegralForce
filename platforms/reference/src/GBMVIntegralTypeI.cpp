@@ -1,4 +1,4 @@
-#include "CharmmQuadrature.h"
+#include "openmm/internal/CharmmQuadrature.h"
 #include "ReferenceForce.h"
 #include "ReferencePlatform.h"
 #include "Units.h"

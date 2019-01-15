@@ -10,7 +10,7 @@
 #include "CharmmReferenceKernels.h"
 #include "CharmmReferenceGBSW.h"
 #include "SimTKOpenMMRealType.h"
-#include "CharmmQuadrature.h"
+#include "openmm/internal/CharmmQuadrature.h"
 #include "Units.h"
 
 using std::vector;

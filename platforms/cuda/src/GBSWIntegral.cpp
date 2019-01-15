@@ -99,7 +99,11 @@ void GBSWIntegral::setBoxVectors(OpenMM::Vec3* vectors){
 }
 
 void GBSWIntegral::BeforeComputation(ContextImpl& context, const std::vector<OpenMM::Vec3>& atomCoordinates){
-    setBoxVectors(extractBoxVectors(context));
+    //setBoxVectors(extractBoxVectors(context));
+    _periodicBoxVectors[0] = {15,0,0};
+    _periodicBoxVectors[1] = {0,15,0};
+    _periodicBoxVectors[2] = {0,0,15};
+    setBoxVectors(_periodicBoxVectors);
 #if USE_LOOKUP_TABLE
     computeLookupTable(atomCoordinates);
 #endif

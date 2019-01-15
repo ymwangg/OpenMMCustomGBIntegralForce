@@ -206,6 +206,11 @@ void CharmmReferenceGBMV::calculateIxn(vector<Vec3>& atomCoordinates, double** a
     // Apply the chain rule to evaluate forces.
 
     calculateChainRuleForces(numberOfAtoms, atomCoordinates, atomParameters, exclusions, forces, energyParamDerivs);
+    /*
+    for(int i=0; i<numberOfAtoms; i++){
+        cout<<dEdI[0][i]<<" "<<dEdI[1][i]<<" "<<dEdV[0][i]<<endl;
+    }
+    */
 }
 
 void CharmmReferenceGBMV::calculateSingleParticleValue(int index, int numAtoms, vector<Vec3>& atomCoordinates, double** atomParameters) {
