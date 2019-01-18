@@ -295,11 +295,12 @@ void ReferenceCalcCharmmGBMVForceKernel::initialize(const System& system, const 
 }
 
 double ReferenceCalcCharmmGBMVForceKernel::validateIntegral(ContextImpl& context){
+    /*
     int atomId = 0;
     vector<Vec3> posData = extractPositions(context);
     integralMethod->BeforeComputation(context, posData);
 
-    std::vector<std::vector<OpenMM::Vec3> > gradients;
+    std::vector<double> gradients;
     std::vector<std::vector<OpenMM::Vec3> > gradientsFD;
     double d=1e-6;
     std::vector<double> values1;
@@ -331,6 +332,7 @@ double ReferenceCalcCharmmGBMVForceKernel::validateIntegral(ContextImpl& context
     error = sqrt(error/n); //should be below 0.1
     cout<<error<<endl;
     return error;
+    */
 }
 double ReferenceCalcCharmmGBMVForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
     //validateIntegral(context);

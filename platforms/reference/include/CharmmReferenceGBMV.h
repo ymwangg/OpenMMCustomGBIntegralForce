@@ -45,9 +45,9 @@ class CharmmReferenceGBMV {
       std::vector<int> particleIntegralIndex;
       int rIndex, xIndex, yIndex, zIndex;
       int numberOfIntegrals, numberOfValues, numberOfAtoms;
-      std::vector<std::vector<double> > values, integrals, dEdV, dEdI;
+      std::vector<std::vector<double> > values, dEdV, dEdI;
       std::vector<std::vector<std::vector<double> > > dValuedParam;
-      std::vector<std::vector<std::vector<OpenMM::Vec3> > > volumeIntegralGradients;
+      std::vector<double> integrals, volumeIntegralGradients;
 
       /**---------------------------------------------------------------------------------------
 

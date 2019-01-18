@@ -42,6 +42,8 @@ CharmmReferenceGBMV::CharmmReferenceGBMV(const int numberOfAtoms, const std::vec
     integralMethod = &integral;
     numberOfIntegrals = integralNames.size();
     numberOfValues = valueNames.size();
+    volumeIntegralGradients.resize(numberOfIntegrals*numberOfAtoms*numberOfAtoms*3); 
+    integrals.resize(numberOfIntegrals*numberOfAtoms);
     for (int i = 0; i < this->valueExpressions.size(); i++)
         expressionSet.registerExpression(this->valueExpressions[i]);
     for (int i = 0; i < this->valueDerivExpressions.size(); i++)
@@ -151,25 +153,10 @@ void CharmmReferenceGBMV::calculateIxn(vector<Vec3>& atomCoordinates, double** a
 
     //compute volume integral and its gradients to all atoms
     if(numberOfIntegrals > 0){
-        volumeIntegralGradients.resize(numberOfIntegrals); //dI[integral][atom]/dr[atomJ]
-        integrals.resize(numberOfIntegrals);
-        for(int i=0; i<numberOfIntegrals; ++i){
-            volumeIntegralGradients[i].resize(numberOfAtoms,vector<Vec3>(numberOfAtoms,Vec3()));
-            integrals[i].resize(numberOfAtoms);
-        }
+        std::fill(integrals.begin(),integrals.end(),0.0);
+        std::fill(volumeIntegralGradients.begin(),volumeIntegralGradients.end(),0.0);
         for(int atomI = 0; atomI < numberOfAtoms; ++atomI){
-            vector<double> tmpValues;
-            std::vector<std::vector<OpenMM::Vec3> > tmpGradients;
-            integralMethod->evaluate(atomI, inContext, atomCoordinates, tmpValues, tmpGradients, true);
-            for(int i=0; i<numberOfIntegrals; ++i){
-                integrals[i][atomI] = tmpValues[i];
-                volumeIntegralGradients[i][atomI] = tmpGradients[i];
-                /*
-                   cout<<integrals[i][atomI]<<" : ";
-                   for(int j=0; j<numberOfAtoms; ++j) cout<<volumeIntegralGradients[i][atomI][j]<<" ";
-                   cout<<endl;
-                   */
-            }
+            integralMethod->evaluate(atomI, inContext, atomCoordinates, integrals, volumeIntegralGradients, true);
         } 
     }
     // Initialize arrays for storing values.
@@ -190,7 +177,7 @@ void CharmmReferenceGBMV::calculateIxn(vector<Vec3>& atomCoordinates, double** a
         }
     }
 
-    //for(auto &c : values[0]) cout<<c<<endl;
+    //cout<<values[0].size()<<endl;
 
     // Now calculate the energy and its derivates.
 
@@ -222,7 +209,7 @@ void CharmmReferenceGBMV::calculateSingleParticleValue(int index, int numAtoms, 
         for (int j = 0; j < (int) paramIndex.size(); j++)
             expressionSet.setVariable(paramIndex[j], atomParameters[i][j]);
         for (int j = 0; j < numberOfIntegrals; j++)
-            expressionSet.setVariable(integralIndex[j], integrals[j][i]);
+            expressionSet.setVariable(integralIndex[j], integrals[j*numberOfAtoms + i]);
         for (int j = 0; j < index; j++)
             expressionSet.setVariable(valueIndex[j], values[j][i]);
         values[index][i] = valueExpressions[index].evaluate();
@@ -248,7 +235,7 @@ void CharmmReferenceGBMV::calculateSingleParticleEnergyTerm(int index, int numAt
         for (int j = 0; j < (int) paramIndex.size(); j++)
             expressionSet.setVariable(paramIndex[j], atomParameters[i][j]);
         for (int j = 0; j < numberOfIntegrals; j++)
-            expressionSet.setVariable(integralIndex[j], integrals[j][i]);
+            expressionSet.setVariable(integralIndex[j], integrals[j*numberOfAtoms + i]);
         for (int j = 0; j < numberOfValues; j++)
             expressionSet.setVariable(valueIndex[j], values[j][i]);
         
@@ -319,8 +306,8 @@ void CharmmReferenceGBMV::calculateOnePairEnergyTerm(int index, int atom1, int a
     }
     //set integral values
     for (int i = 0; i < numberOfIntegrals; i++) {
-        expressionSet.setVariable(particleIntegralIndex[i*2], integrals[i][atom1]);
-        expressionSet.setVariable(particleIntegralIndex[i*2+1], integrals[i][atom2]);
+        expressionSet.setVariable(particleIntegralIndex[i*2], integrals[i*numberOfAtoms + atom1]);
+        expressionSet.setVariable(particleIntegralIndex[i*2+1], integrals[i*numberOfAtoms + atom2]);
     }
     //set computed values
     for (int i = 0; i < numberOfValues; i++) {
@@ -365,7 +352,7 @@ void CharmmReferenceGBMV::calculateChainRuleForces(int numAtoms, vector<Vec3>& a
         for (int j = 0; j < (int) paramIndex.size(); j++)
             expressionSet.setVariable(paramIndex[j], atomParameters[i][j]);
         for (int j = 0; j < numberOfIntegrals; j++)
-            expressionSet.setVariable(integralIndex[j], integrals[j][i]);
+            expressionSet.setVariable(integralIndex[j], integrals[j*numberOfAtoms + i]);
         for (int j = 0; j < numberOfValues; j++)
             expressionSet.setVariable(valueIndex[j], values[j][i]);
         //calculate dEdV using chain rule
@@ -386,7 +373,8 @@ void CharmmReferenceGBMV::calculateChainRuleForces(int numAtoms, vector<Vec3>& a
         for (int j = 0; j < numberOfAtoms; j++){
             for (int k = 0; k < numberOfIntegrals; k++){
                 for (int l = 0; l < 3; l++){
-                    forces[j][l] -= dEdI[k][i]*volumeIntegralGradients[k][i][j][l];
+                    int grad_idx = k*numberOfAtoms*numberOfAtoms*3 + i*numberOfAtoms*3 + j*3 + l;
+                    forces[j][l] -= dEdI[k][i]*volumeIntegralGradients[grad_idx];
                 }
             }
         }
@@ -426,7 +414,7 @@ void CharmmReferenceGBMV::calculateChainRuleForces(int numAtoms, vector<Vec3>& a
         for (int j = 0; j < (int) paramIndex.size(); j++)
             expressionSet.setVariable(paramIndex[j], atomParameters[i][j]);
         for (int j = 0; j < numberOfIntegrals; j++)
-            expressionSet.setVariable(integralIndex[j], integrals[j][i]);
+            expressionSet.setVariable(integralIndex[j], integrals[j*numberOfAtoms + i]);
         for (int j = 0; j < numberOfValues; j++) {
             expressionSet.setVariable(valueIndex[j], values[j][i]);
             for (int k = 0; k < j; k++) {
@@ -452,84 +440,3 @@ void CharmmReferenceGBMV::calculateChainRuleForces(int numAtoms, vector<Vec3>& a
                 energyParamDerivs[k] += dEdV[j][i]*dValuedParam[j][k][i];
 }
 
-/*
-void CharmmReferenceGBMV::calculateOnePairChainRule(int atom1, int atom2, vector<Vec3>& atomCoordinates, double** atomParameters,
-        vector<Vec3>& forces, bool isExcluded) {
-    // Compute the displacement.
-    double deltaR[ReferenceForce::LastDeltaRIndex];
-    if (periodic)
-        ReferenceForce::getDeltaRPeriodic(atomCoordinates[atom2], atomCoordinates[atom1], periodicBoxVectors, deltaR);
-    else
-        ReferenceForce::getDeltaR(atomCoordinates[atom2], atomCoordinates[atom1], deltaR);
-    double r = deltaR[ReferenceForce::RIndex];
-    if (cutoff && r >= cutoffDistance)
-        return;
-
-    // Record variables for evaluating expressions.
-    for (int i = 0; i < (int) paramIndex.size(); i++) {
-        expressionSet.setVariable(particleParamIndex[i*2], atomParameters[atom1][i]);
-        expressionSet.setVariable(particleParamIndex[i*2+1], atomParameters[atom2][i]);
-    }
-
-    //set r
-    expressionSet.setVariable(rIndex, r);
-
-    //set integrals
-    for (int i = 0; i < numberOfIntegrals; i++){
-        expressionSet.setVariable(particleIntegralIndex[2*i], integrals[i][atom1]);
-        expressionSet.setVariable(particleIntegralIndex[2*i+1], integrals[i][atom2]);
-    }
-
-    //set values
-    for (int i = 0; i < numberOfValues; i++){
-        expressionSet.setVariable(particleValueIndex[2*i], values[i][atom1]);
-        expressionSet.setVariable(particleValueIndex[2*i+1], values[i][atom2]);
-    }
-
-    //set x,y,z
-    expressionSet.setVariable(xIndex, atomCoordinates[atom1][0]);
-    expressionSet.setVariable(yIndex, atomCoordinates[atom1][1]);
-    expressionSet.setVariable(zIndex, atomCoordinates[atom1][2]);
-
-    //set parameters
-    for (int i = 0; i < (int) paramIndex.size(); i++)
-        expressionSet.setVariable(paramIndex[i], atomParameters[atom1][i]);
-
-    // Evaluate the derivative of each parameter with respect to position and apply forces.
-
-    //compute volume integral forces
-    if (!isExcluded){
-        for (int i = 0; i < numberOfIntegrals; i++){
-            for(int j = 0; j < numberOfAtoms; j++){
-                for(int k = 0; k < 3; k++){
-                    forces[j][k] -= dEdI[i][j] * volumeIntegralGradients[i][atom1][j][k];
-                }
-            }
-        }
-    }
-
-    for (int i = 0; i < numberOfIntegrals; i++)
-        expressionSet.setVariable(integralIndex[i], integrals[i][atom1]);
-
-    vector<vector<double> > dVdI(numberOfValues,vector<double>(numberOfIntegrals,0.0));
-    for (int i = 0; i < numberOfValues; i++) {
-        expressionSet.setVariable(valueIndex[i], values[i][atom1]);
-        for (int j = 0; j < numberOfIntegrals; j++){
-            dVdI[i][j] += valueDerivExpressions[i][j].evaluate();
-        }
-        for (int k = 0; k < i; k++){
-            double dVidVk = valueDerivExpressions[i][k+numberOfIntegrals].evaluate();
-            for(int j = 0; j < numberOfIntegrals; j++){
-                dVdI[i][j] += dVidVk*dVdI[k][j];
-            }
-        }
-        for (int j = 0; j < numberOfIntegrals; j++){
-            for(int k = 0; k < numberOfAtoms; k++){
-                for(int l = 0; l < 3; l++){
-                    forces[k][l] -= dEdV[i][atom1]*dVdI[i][j]*volumeIntegralGradients[j][atom1][k][l];
-                }
-            }
-        }
-    }
-}
-*/

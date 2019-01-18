@@ -32,7 +32,7 @@ GBSWIntegral::GBSWIntegral(){
     int nRadialPoints = 24; 
 
     //rule of Lebedev quadrature for spherical integral
-    int ruleLebedev = 4;
+    int ruleLebedev = 4; //3->38points
     vector<vector<double> > radialQuad = CharmmQuadrature::GaussLegendre(_r0, _r1, nRadialPoints);
     vector<vector<double> > sphericalQuad = CharmmQuadrature::Lebedev(ruleLebedev);
     _quad.resize(radialQuad.size()*sphericalQuad.size(), vector<double>(5,0.0));
@@ -52,7 +52,7 @@ GBSWIntegral::GBSWIntegral(){
 
     //lookup table parameters
     setLookupTableGridLength(0.15); //0.15nm
-    setLookupTableBufferLength(0.20+_sw); //0.20nm
+    setLookupTableBufferLength(0.00+_sw); //0.20nm
 }
 
 void GBSWIntegral::initialize(const OpenMM::System& system, const OpenMM::CharmmGBMVForce& force){
@@ -109,9 +109,7 @@ void GBSWIntegral::FinishComputation(ContextImpl& context, const std::vector<Ope
     //do nothing
 }
 
-void GBSWIntegral::evaluate(const int atomI, ContextImpl& context, const std::vector<OpenMM::Vec3>& atomCoordinates, std::vector<double>& values, std::vector<std::vector<OpenMM::Vec3> >& gradients, const bool includeGradient){
-    values.resize(_orders.size(), 0.0);
-    if(includeGradient) gradients.resize(_orders.size(),std::vector<OpenMM::Vec3>(_numParticles, OpenMM::Vec3()));
+void GBSWIntegral::evaluate(const int atomI, ContextImpl& context, const std::vector<OpenMM::Vec3>& atomCoordinates, std::vector<double>& integrals, std::vector<double>& gradients, const bool includeGradient){
     vector<double> prefactors(_quad.size());
     for(int q=0; q<_quad.size(); ++q){
         OpenMM::Vec3 r_q;
@@ -126,16 +124,17 @@ void GBSWIntegral::evaluate(const int atomI, ContextImpl& context, const std::ve
 #else
         double V_q = computeVolume(atomCoordinates, r_q);
 #endif
-        for(int i=0; i<_orders.size(); ++i){
+        for(int i=0; i<_numIntegrals; ++i){
+            int integral_globalIdx = i*_numParticles + atomI;
             prefactors[i] = w_q/pow(radius_q, _orders[i]);
-            values[i] += prefactors[i]*(1.0 - V_q);
+            integrals[integral_globalIdx] += prefactors[i]*(1.0 - V_q);
         }
         if(includeGradient){
             for(int i=0; i<_orders.size(); ++i){
 #if USE_LOOKUP_TABLE
-                computeGradientPerQuadFromLookupTable(atomI, atomCoordinates, r_q, V_q, gradients[i], prefactors[i], atomList);
+                computeGradientPerQuadFromLookupTable(atomI, i, atomCoordinates, r_q, V_q, gradients, prefactors[i], atomList);
 #else
-                computeGradientPerQuad(atomI, atomCoordinates, r_q, V_q, gradients[i], prefactors[i]);
+                computeGradientPerQuad(atomI, atomCoordinates, r_q, V_q, gradients, prefactors[i]);
 #endif
             }
         }
@@ -200,8 +199,8 @@ double GBSWIntegral::computeVolumeFromLookupTable(const std::vector<OpenMM::Vec3
     return V;
 }
 
-void GBSWIntegral::computeGradientPerQuad(const int atomI, const std::vector<OpenMM::Vec3>& atomCoordinates, 
-        const OpenMM::Vec3& r_q, const double V_q, std::vector<OpenMM::Vec3>& gradients, const double prefactor){
+void GBSWIntegral::computeGradientPerQuad(const int atomI, const int integralIdx, const std::vector<OpenMM::Vec3>& atomCoordinates, 
+        const OpenMM::Vec3& r_q, const double V_q, std::vector<double>& gradients, const double prefactor){
     if(V_q == 0) return;
     double deltaR[ReferenceForce::LastDeltaRIndex];
     double deltaR_qj;
@@ -235,13 +234,17 @@ void GBSWIntegral::computeGradientPerQuad(const int atomI, const std::vector<Ope
         dV_drq[0] = deltaR[ReferenceForce::XIndex]*factor;
         dV_drq[1] = deltaR[ReferenceForce::YIndex]*factor;
         dV_drq[2] = deltaR[ReferenceForce::ZIndex]*factor;
-        gradients[atomI] += dV_drq;
-        gradients[atomJ] -= dV_drq;
+        int grad_idx_i = integralIdx*_numParticles*_numParticles*3 +  atomI*_numParticles*3 + atomI*3;
+        int grad_idx_j = integralIdx*_numParticles*_numParticles*3 +  atomI*_numParticles*3 + atomJ*3;
+        for(int n = 0; n < 3; ++n){
+            gradients[grad_idx_i + n] += dV_drq[n];
+            gradients[grad_idx_j + n] -= dV_drq[n];
+        }
     }
     return;
 }
 
-void GBSWIntegral::computeGradientPerQuadFromLookupTable(const int atomI, const std::vector<OpenMM::Vec3>& atomCoordinates, const OpenMM::Vec3& r_q, const double V_q, std::vector<OpenMM::Vec3>& gradients, const double prefactor, const std::vector<int>& atomList){
+void GBSWIntegral::computeGradientPerQuadFromLookupTable(const int atomI, const int integralIdx, const std::vector<OpenMM::Vec3>& atomCoordinates, const OpenMM::Vec3& r_q, const double V_q, std::vector<double>& gradients, const double prefactor, const std::vector<int>& atomList){
     if(V_q == 0) return;
     double deltaR[ReferenceForce::LastDeltaRIndex];
     double deltaR_qj;
@@ -276,8 +279,12 @@ void GBSWIntegral::computeGradientPerQuadFromLookupTable(const int atomI, const 
         dV_drq[0] = deltaR[ReferenceForce::XIndex]*factor;
         dV_drq[1] = deltaR[ReferenceForce::YIndex]*factor;
         dV_drq[2] = deltaR[ReferenceForce::ZIndex]*factor;
-        gradients[atomI] += dV_drq;
-        gradients[atomJ] -= dV_drq;
+        int grad_idx_i = integralIdx*_numParticles*_numParticles*3 +  atomI*_numParticles*3 + atomI*3;
+        int grad_idx_j = integralIdx*_numParticles*_numParticles*3 +  atomI*_numParticles*3 + atomJ*3;
+        for(int n = 0; n < 3; ++n){
+            gradients[grad_idx_i + n] += dV_drq[n];
+            gradients[grad_idx_j + n] -= dV_drq[n];
+        }
     }
     return;
 }
