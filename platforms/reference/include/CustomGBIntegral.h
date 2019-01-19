@@ -12,11 +12,11 @@ class CustomGBIntegral{
         virtual void BeforeComputation(OpenMM::ContextImpl& context, const std::vector<OpenMM::Vec3>& posData) = 0;
         virtual void FinishComputation(OpenMM::ContextImpl& context, const std::vector<OpenMM::Vec3>& posData) = 0;
         virtual void initialize(const OpenMM::System& system, const OpenMM::CharmmGBMVForce& force) = 0;
-        virtual void evaluate(const int atomI, OpenMM::ContextImpl& context, 
+        virtual void evaluate(OpenMM::ContextImpl& context, 
                 const std::vector<OpenMM::Vec3>& atomCoordinates, std::vector<double>& values, 
                 std::vector<double>& gradients, const bool includeGradient) = 0;
         void computeLookupTable(const std::vector<OpenMM::Vec3>& atomCoordinates);
-        void getLookupTableAtomList(OpenMM::Vec3 point, std::vector<int>& atomList);
+        void getLookupTableAtomList(OpenMM::Vec3 point, std::vector<int>* &atomList, int& numAtoms);
         void setPeriodic(OpenMM::Vec3* vectors);
         void setLookupTableGridLength(double length);
         void setLookupTableBufferLength(double length);
@@ -34,6 +34,7 @@ class CustomGBIntegral{
         double _lookupTableMaxCoordinate[3];
         double _lookupTableGridLength;
         double _lookupTableBufferLength;
+        double _lookupTableGridStep[3];
         int _lookupTableNumberOfGridPoints[3];
         bool _periodic;
         OpenMM::Vec3 _periodicBoxVectors[3];

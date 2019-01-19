@@ -4,6 +4,7 @@
 #include <iostream>
 #include <cstdio>
 #include <chrono>
+#include <cmath>
 
 using namespace::OpenMM;
 using namespace::std;
@@ -34,64 +35,121 @@ void CustomGBIntegral::setLookupTableBufferLength(double length){
 
 void CustomGBIntegral::computeLookupTable(const std::vector<OpenMM::Vec3>& atomCoordinates){
     auto start = std::chrono::system_clock::now();
+    _lookupTableGridLength = 0.15;
+    _lookupTableBufferLength = 0.04;
     //_lookupTable;
-    //  
     //_r1;
     int numParticles = atomCoordinates.size();
     //if system is periodic
     if(_periodic){
-        float d_x = _periodicBoxVectors[0][0];
-        float d_y = _periodicBoxVectors[1][1];
-        float d_z = _periodicBoxVectors[2][2];
+        //only support rectangular box
         if(_periodicBoxVectors[0][1]!=0 || _periodicBoxVectors[0][2]!=0 ||
                 _periodicBoxVectors[1][0]!=0 || _periodicBoxVectors[1][2]!=0 ||
                 _periodicBoxVectors[2][0]!=0 || _periodicBoxVectors[2][1]!=0)
             throw OpenMM::OpenMMException("CharmmGBMVForce: Only Rectangular Periodic Box is Supported!");
-        int n_x = ceil(d_x/_lookupTableGridLength) + 1;
-        int n_y = ceil(d_y/_lookupTableGridLength) + 1;
-        int n_z = ceil(d_z/_lookupTableGridLength) + 1;
+
+        //compute center of geometry
+        double center_of_geom[3] = {0,0,0};
+        for(int i=0; i<atomCoordinates.size(); i++){
+            center_of_geom[0] += atomCoordinates[i][0];
+            center_of_geom[1] += atomCoordinates[i][1];
+            center_of_geom[2] += atomCoordinates[i][2];
+        }
+        center_of_geom[0] /= atomCoordinates.size();
+        center_of_geom[1] /= atomCoordinates.size();
+        center_of_geom[2] /= atomCoordinates.size();
+
+        //get box dimensions
+        double d_x = _periodicBoxVectors[0][0];
+        double d_y = _periodicBoxVectors[1][1];
+        double d_z = _periodicBoxVectors[2][2];
+
+        //randomly move molecule in space
+        //center_of_geom[0] += (((double) rand() / (RAND_MAX)) + 1)*d_x;
+        //center_of_geom[1] += (((double) rand() / (RAND_MAX)) + 1)*d_y;
+        //center_of_geom[2] += (((double) rand() / (RAND_MAX)) + 1)*d_z;
+        //printf("center=(%f,%f,%f)\n",center_of_geom[0],center_of_geom[1],center_of_geom[2]);
+
+        //compute lookuptable dimensions
+        _lookupTableMinCoordinate[0] = center_of_geom[0] - d_x/2.0;
+        _lookupTableMinCoordinate[1] = center_of_geom[1] - d_y/2.0;
+        _lookupTableMinCoordinate[2] = center_of_geom[2] - d_z/2.0;
+
+        _lookupTableMaxCoordinate[0] = center_of_geom[0] + d_x/2.0;
+        _lookupTableMaxCoordinate[1] = center_of_geom[1] + d_y/2.0;
+        _lookupTableMaxCoordinate[2] = center_of_geom[2] + d_z/2.0;
+        //printf("lookupTable min=(%f,%f,%f) max=(%f,%f,%f)\n",_lookupTableMinCoordinate[0],
+        //        _lookupTableMinCoordinate[1],_lookupTableMinCoordinate[2],
+        //        _lookupTableMaxCoordinate[0],_lookupTableMaxCoordinate[1],
+        //        _lookupTableMaxCoordinate[2]);
+
+        int n_x = ceil(d_x/_lookupTableGridLength)+1;
+        int n_y = ceil(d_y/_lookupTableGridLength)+1;
+        int n_z = ceil(d_z/_lookupTableGridLength)+1;
+
         _lookupTableNumberOfGridPoints[0] = n_x;
         _lookupTableNumberOfGridPoints[1] = n_y;
         _lookupTableNumberOfGridPoints[2] = n_z;
-        int totalNumberOfGridPoints = n_x*n_y*n_z;
-        if(_lookupTable.empty()) _lookupTable.resize(n_x*n_y*n_z,vector<int>(_lookupTableSize));
-        if(_lookupTableNumAtoms.empty()) _lookupTableNumAtoms.resize(n_x*n_y*n_z);
+        int totalNumGridPoints = n_x*n_y*n_z;
 
-        /*
-        for(int i=0; i<totalNumberOfGridPoints; i++) 
-            _lookupTableNumAtoms[i] = 0;
-            */
+        if(_lookupTable.empty()) _lookupTable.resize(totalNumGridPoints,vector<int>(_lookupTableSize));
+        if(_lookupTableNumAtoms.empty()) _lookupTableNumAtoms.resize(totalNumGridPoints);
         std::fill(_lookupTableNumAtoms.begin(),_lookupTableNumAtoms.end(),0.0);
 
-        OpenMM::Vec3 coor;
-        float beginCoor[3]; 
-        float endCoor[3]; 
-        float step = _lookupTableGridLength;
+        //printf("(%f,%f,%f)->(%f,%f,%f)->(%d,%d,%d)\n",d_x/_lookupTableGridLength,
+        //        d_y/_lookupTableGridLength,d_z/_lookupTableGridLength,
+        //        floor(d_x/_lookupTableGridLength),floor(d_y/_lookupTableGridLength),floor(d_z/_lookupTableGridLength),
+        //        n_x,n_y,n_z);
+
+        //compute step size of each dimension
+        double step[3];
+        step[0] = d_x / n_x;
+        step[1] = d_y / n_y;
+        step[2] = d_z / n_z;
+        _lookupTableGridStep[0] = step[0];
+        _lookupTableGridStep[1] = step[1];
+        _lookupTableGridStep[2] = step[2];
+        double lookupTableGridLength = max(max(step[0],step[1]),step[2]);
+
+        //printf("(%f,%f,%f)->(%d,%d,%d)->(%f,%f,%f)\n",d_x,d_y,d_z,n_x,n_y,n_z,step[0],step[1],step[2]);
+        //printf("%f->%f\n",_lookupTableGridLength,lookupTableGridLength);
         for(int atomI=0; atomI<numParticles; ++atomI){
-            float paddingLength = _atomicRadii[atomI] + 
-                sqrt(3.0)/2.0*_lookupTableGridLength + _lookupTableBufferLength;
-            coor = atomCoordinates[atomI];
+            double paddingLength = _atomicRadii[atomI] + 
+                sqrt(3.0)/2.0*lookupTableGridLength + _lookupTableBufferLength;
+            OpenMM::Vec3 coor = atomCoordinates[atomI];
+            double beginCoor[3]; 
+            double endCoor[3]; 
             for(int i=0; i<3; ++i){
-                beginCoor[i] = (coor[i] - paddingLength);
-                endCoor[i] = (coor[i] + paddingLength);
+                beginCoor[i] = (coor[i] - paddingLength - lookupTableGridLength);
+                endCoor[i] = (coor[i] + paddingLength + lookupTableGridLength);
             }
             //printf("(%f,%f,%f) to (%f,%f,%f) for (%f,%f,%f)\n",beginCoor[0],beginCoor[1],beginCoor[2],
             //        endCoor[0],endCoor[1],endCoor[2],coor[0],coor[1],coor[2]);
-            for(float x = beginCoor[0]; x < endCoor[0]; x += step){
-                float x0 = x - floor(x/d_x)*d_x;
-                int idx_x = x0/step;
-                for(float y = beginCoor[1]; y < endCoor[1]; y += step){
-                    float y0 = y - floor(y/d_y)*d_y;
-                    int idx_y = y0/step;
-                    for(float z = beginCoor[2]; z < endCoor[2]; z += step){
-                        float z0 = z - floor(z/d_z)*d_z;
-                        int idx_z = z0/step;
+            for(double x = beginCoor[0]; x < endCoor[0]; x += step[0]){
+                for(double y = beginCoor[1]; y < endCoor[1]; y += step[1]){
+                    for(double z = beginCoor[2]; z < endCoor[2]; z += step[2]){
+                        double x0 = x - d_x * floor((x-_lookupTableMinCoordinate[0])/d_x);
+                        double y0 = y - d_y * floor((y-_lookupTableMinCoordinate[1])/d_y);
+                        double z0 = z - d_z * floor((z-_lookupTableMinCoordinate[2])/d_z);
+                        int idx_x = floor((x0-_lookupTableMinCoordinate[0])/step[0]);
+                        int idx_y = floor((y0-_lookupTableMinCoordinate[1])/step[1]);
+                        int idx_z = floor((z0-_lookupTableMinCoordinate[2])/step[2]);
+                        double r = sqrt((x-coor[0])*(x-coor[0]) + (y-coor[1])*(y-coor[1]) + 
+                                (z-coor[2])*(z-coor[2]));
                         if( (x-coor[0])*(x-coor[0]) + (y-coor[1])*(y-coor[1]) 
                                 + (z-coor[2])*(z-coor[2]) < paddingLength*paddingLength){
+                            //printf("r=%f pad=%f\n",r,paddingLength);
                             int idx = idx_x*n_y*n_z + idx_y*n_z + idx_z;
+                            /*
+                               printf("r0=(%f,%f,%f) pad=%f (%f,%f,%f)->(%f,%f,%f)->
+                               (%d,%d,%d)->(%d)\n",coor[0],coor[1],coor[2],
+                               paddingLength,x,y,z,x0,y0,z0,idx_x,idx_y,idx_z,idx);
+                               */
                             if(_lookupTableNumAtoms[idx] < _lookupTableSize){
                                 _lookupTable[idx][_lookupTableNumAtoms[idx]] = atomI;
                                 _lookupTableNumAtoms[idx] ++;
+                            }else{
+                                printf("warning%d\n",idx);
                             }
                         }
                     }
@@ -112,12 +170,12 @@ void CustomGBIntegral::computeLookupTable(const std::vector<OpenMM::Vec3>& atomC
             }
         }
         int totalNumberOfGridPoints = 1;
-        float maxR = 0.03;
-        float paddingLength = maxR + sqrt(3.0)/2.0*_lookupTableGridLength + _lookupTableBufferLength;
+        double maxR = 0.03;
+        double paddingLength = maxR + sqrt(3.0)/2.0*_lookupTableGridLength + _lookupTableBufferLength;
         for(int i=0; i<3; ++i){
             _minCoordinate[i] -= paddingLength;
             _maxCoordinate[i] += paddingLength;
-            float length = _maxCoordinate[i]-_minCoordinate[i];
+            double length = _maxCoordinate[i]-_minCoordinate[i];
             _lookupTableNumberOfGridPoints[i] = static_cast<int>(
                     ceil(length/_lookupTableGridLength))+1;
             if(length > 1000)
@@ -125,15 +183,19 @@ void CustomGBIntegral::computeLookupTable(const std::vector<OpenMM::Vec3>& atomC
             _lookupTableMinCoordinate[i] = _minCoordinate[i];
             _lookupTableMaxCoordinate[i] = _minCoordinate[i]+(_lookupTableNumberOfGridPoints[i]-1)*_lookupTableGridLength;
             totalNumberOfGridPoints *= _lookupTableNumberOfGridPoints[i];
-            //cout<<minCoordinate[i]<<" "<<maxCoordinate[i]<<" "<<_lookupTableNumberOfGridPoints[i]<<endl;
         }
         int n_x = _lookupTableNumberOfGridPoints[0];
         int n_y = _lookupTableNumberOfGridPoints[1];
         int n_z = _lookupTableNumberOfGridPoints[2];
-        _lookupTable.clear();
-        _lookupTable.resize(totalNumberOfGridPoints,vector<int>());
+        _lookupTable.resize(totalNumberOfGridPoints,vector<int>(_lookupTableSize));
+        _lookupTableNumAtoms.resize(totalNumberOfGridPoints);
+        std::fill(_lookupTableNumAtoms.begin(),_lookupTableNumAtoms.end(),0.0);
+
+        //printf("min(%f,%f,%f) max(%f,%f,%f) n(%d,%d,%d)\n",_minCoordinate[0],_minCoordinate[1],_minCoordinate[2],
+        //        _maxCoordinate[0],_maxCoordinate[1],_maxCoordinate[2],n_x,n_y,n_z);
+
         for(int atomI=0; atomI<numParticles; ++atomI){
-            float paddingLength = _atomicRadii[atomI] + 
+            double paddingLength = _atomicRadii[atomI] + 
                 sqrt(3.0)/2.0*_lookupTableGridLength + _lookupTableBufferLength;
             OpenMM::Vec3 coor = atomCoordinates[atomI];
             int beginLookupTableIndex[3];
@@ -152,22 +214,70 @@ void CustomGBIntegral::computeLookupTable(const std::vector<OpenMM::Vec3>& atomC
                                 _lookupTableMinCoordinate[1]+j*_lookupTableGridLength,
                                 _lookupTableMinCoordinate[2]+k*_lookupTableGridLength);
                         OpenMM::Vec3 diff = gridPoint - coor;
-                        if(sqrt(diff.dot(diff)) < paddingLength){
-                            _lookupTable[idx].push_back(atomI);
+                        if(diff[0]*diff[0]+diff[1]*diff[1]+diff[2]*diff[2] < paddingLength*paddingLength){
+                            if(_lookupTableNumAtoms[idx] < _lookupTableSize){
+                                _lookupTable[idx][_lookupTableNumAtoms[idx]] = atomI;
+                                _lookupTableNumAtoms[idx] ++;
+                            }
                         }
                     }
                 }
             }
         }
     } //end not periodic
+    long sum = 0;
+    for(auto &c : _lookupTableNumAtoms) sum += c;
+    cout<<"total number of atoms in lookup table = "<<sum<<endl;
+    /**
+    for(int i=0; i<_lookupTableNumberOfGridPoints[0]; i++){
+        for(int j=0; j<_lookupTableNumberOfGridPoints[1]; j++){
+            for(int k=0; k<_lookupTableNumberOfGridPoints[2]; k++){
+                int idx = i*_lookupTableNumberOfGridPoints[1]*_lookupTableNumberOfGridPoints[2] + 
+                    j*_lookupTableNumberOfGridPoints[2] + k;
+                if(_lookupTableNumAtoms[idx]!=0){
+                printf("(%d,%d,%d)-",i,j,k);
+                for(int m=0; m<_lookupTableNumAtoms[idx]; m++) printf("-%d",_lookupTable[idx][m]);
+                printf("\n");
+                }
+            }    
+        }    
+    }
+    */
     auto end = std::chrono::system_clock::now();
     std::chrono::duration<double> elapsed_seconds = end-start;
     cout<<"building lookupTable elapsed time: " << elapsed_seconds.count()<<endl;
+    //put the closest atom to the grid point in the first place
+    /*
+    OpenMM::Vec3 point;
+    for(int i=0; i<_lookupTableNumberOfGridPoints[0]; i++){
+        for(int j=0; j<_lookupTableNumberOfGridPoints[1]; j++){
+            for(int k=0; k<_lookupTableNumberOfGridPoints[2]; k++){
+                int idx = i*_lookupTableNumberOfGridPoints[1]*_lookupTableNumberOfGridPoints[2] + 
+                    j*_lookupTableNumberOfGridPoints[2] + k;
+                if(_lookupTableNumAtoms[idx]!=0){
+                    point[0] = i*_lookupTableGridStep[0] + _minCoordinate[0];
+                    point[1] = j*_lookupTableGridStep[1] + _minCoordinate[1];
+                    point[2] = k*_lookupTableGridStep[2] + _minCoordinate[2];
+                    int idx_min = _lookupTable[idx][0];
+                    double dr_min = (atomCoordinates[idx_min]-point).dot(atomCoordinates[idx_min]-point);
+                    for(int n=1; n<_lookupTableNumAtoms[idx]; n++){
+                        double dr = (atomCoordinates[_lookupTable[idx][n]]-point).
+                            dot(atomCoordinates[_lookupTable[idx][n]]-point);
+                        if(dr < dr_min){
+                            swap(_lookupTable[idx][0],_lookupTable[idx][n]);
+                            dr_min = dr;
+                        }
+                    }
+                }
+            }
+        } 
+    }    
+    */
+    //end find min
 }
 
 
-void CustomGBIntegral::getLookupTableAtomList(OpenMM::Vec3 point, std::vector<int>& atomList){
-    atomList.clear();
+void CustomGBIntegral::getLookupTableAtomList(OpenMM::Vec3 point, std::vector<int>* &atomList, int& numAtoms){
     //lookuptable size
     int nx = _lookupTableNumberOfGridPoints[0];
     int ny = _lookupTableNumberOfGridPoints[1];
@@ -182,15 +292,20 @@ void CustomGBIntegral::getLookupTableAtomList(OpenMM::Vec3 point, std::vector<in
                 _periodicBoxVectors[2][0]!=0 || _periodicBoxVectors[2][1]!=0)
             throw OpenMM::OpenMMException("CharmmGBMVForce: Only Rectangular Periodic Box is Supported!");
         //transform the point into the original box
-        double x0 = point[0] - floor(point[0]/d_x)*d_x;
-        double y0 = point[1] - floor(point[1]/d_y)*d_y;
-        double z0 = point[2] - floor(point[2]/d_z)*d_z;
+        double x0 = point[0] - floor((point[0]-_lookupTableMinCoordinate[0])/d_x)*d_x;
+        double y0 = point[1] - floor((point[1]-_lookupTableMinCoordinate[1])/d_y)*d_y;
+        double z0 = point[2] - floor((point[2]-_lookupTableMinCoordinate[2])/d_z)*d_z;
+        //printf("(%f,%f,%f)->(%d,%d,%d)\n",point[0],point[1],point[2]);
         //calculate lookupTable index
-        int idx_x = static_cast<int>(floor(x0/_lookupTableGridLength)); 
-        int idx_y = static_cast<int>(floor(y0/_lookupTableGridLength)); 
-        int idx_z = static_cast<int>(floor(z0/_lookupTableGridLength)); 
+        int idx_x = (x0-_lookupTableMinCoordinate[0])/_lookupTableGridStep[0];
+        int idx_y = (y0-_lookupTableMinCoordinate[1])/_lookupTableGridStep[1]; 
+        int idx_z = (z0-_lookupTableMinCoordinate[2])/_lookupTableGridStep[2]; 
         int idx = idx_x*(ny*nz) + idx_y*nz + idx_z;
-        atomList = _lookupTable[idx];
+        atomList = &_lookupTable[idx];
+        numAtoms = _lookupTableNumAtoms[idx];
+        //printf("%p\n",&_lookupTable[idx]);
+        //printf("(%f,%f,%f)->(%f,%f,%f)->(%d,%d,%d)->%d\n",point[0],point[1],point[2],x0,y0,z0,
+        //        idx_x,idx_y,idx_z,idx);
         //printf("(%f,%f,%f)->(%f,%f,%f)->(%d,%d,%d)->%d->%d\n",point[0],point[1],point[2],
         //        x0,y0,z0,idx_x,idx_y,idx_z,idx,atomList.size());
     }else{
@@ -205,8 +320,14 @@ void CustomGBIntegral::getLookupTableAtomList(OpenMM::Vec3 point, std::vector<in
                         (point[i]-_lookupTableMinCoordinate[i]) / _lookupTableGridLength));
         }
         int lookupTableIdx = idx[0]*(ny*nz) + idx[1]*nz + idx[2];
-        atomList = _lookupTable[lookupTableIdx];
+        atomList = &_lookupTable[lookupTableIdx];
+        numAtoms = _lookupTableNumAtoms[lookupTableIdx];
     }
+    /*
+    printf("(%f,%f,%f) %d ",point[0],point[1],point[2], numAtoms);
+    for(auto &c : atomList) printf("-%d",c);
+    printf("\n");
+    */
     return;
 }
 

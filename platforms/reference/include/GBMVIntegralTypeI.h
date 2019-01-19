@@ -12,13 +12,13 @@ class GBMVIntegralTypeI : public CustomGBIntegral {
         ~GBMVIntegralTypeI(){
         }
         void initialize(const OpenMM::System& system, const CharmmGBMVForce& force);
-        void evaluate(const int atomI, OpenMM::ContextImpl& context, const std::vector<OpenMM::Vec3>& atomCoordinates, std::vector<double>& values, std::vector<double>& gradients, const bool includeGradient = true);
+        void evaluate(OpenMM::ContextImpl& context, const std::vector<OpenMM::Vec3>& atomCoordinates, std::vector<double>& values, std::vector<double>& gradients, const bool includeGradient = true);
         void BeforeComputation(ContextImpl& context, const std::vector<OpenMM::Vec3>& atomCoordinates);
         void FinishComputation(ContextImpl& context, const std::vector<OpenMM::Vec3>& atomCoordinates);
     private:
         void setBoxVectors(OpenMM::Vec3* vectors);
-        double computeVolumeFromLookupTable(const std::vector<OpenMM::Vec3>& atomCoordinates, const OpenMM::Vec3& r_q, const std::vector<int>& atomList);
-        void computeGradientPerQuadFromLookupTable(const int atomI, const int valueIdx, const std::vector<OpenMM::Vec3>& atomCoordinates,const OpenMM::Vec3& r_q, const double V_q, std::vector<double>& gradients, const double prefactor, const std::vector<int>& atomList);
+        double computeVolumeFromLookupTable(const std::vector<OpenMM::Vec3>& atomCoordinates, const OpenMM::Vec3& r_q, const std::vector<int>& atomList, const int numListAtoms);
+        void computeGradientPerQuadFromLookupTable(const int atomI, const int valueIdx, const std::vector<OpenMM::Vec3>& atomCoordinates,const OpenMM::Vec3& r_q, const double V_q, std::vector<double>& gradients, const double prefactor, const std::vector<int>& atomList, const int numListAtoms);
 
         int _numIntegrals;
         int _numParticles;

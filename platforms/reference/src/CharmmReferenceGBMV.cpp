@@ -1,7 +1,10 @@
+// timing
+#include <chrono>
+#define BEGIN auto start = std::chrono::system_clock::now();
+#define END auto end = std::chrono::system_clock::now();std::chrono::duration<double> elapsed_seconds = end-start;cout<<"calculateIxn elapsed time: " << elapsed_seconds.count()<<endl;
+
 #include <string.h>
 #include <sstream>
-
-
 #include "CustomGBIntegral.h"
 #include "SimTKOpenMMUtilities.h"
 #include "ReferenceForce.h"
@@ -44,6 +47,7 @@ CharmmReferenceGBMV::CharmmReferenceGBMV(const int numberOfAtoms, const std::vec
     numberOfValues = valueNames.size();
     volumeIntegralGradients.resize(numberOfIntegrals*numberOfAtoms*numberOfAtoms*3); 
     integrals.resize(numberOfIntegrals*numberOfAtoms);
+
     for (int i = 0; i < this->valueExpressions.size(); i++)
         expressionSet.registerExpression(this->valueExpressions[i]);
     for (int i = 0; i < this->valueDerivExpressions.size(); i++)
@@ -153,31 +157,22 @@ void CharmmReferenceGBMV::calculateIxn(vector<Vec3>& atomCoordinates, double** a
 
     //compute volume integral and its gradients to all atoms
     if(numberOfIntegrals > 0){
-        std::fill(integrals.begin(),integrals.end(),0.0);
-        std::fill(volumeIntegralGradients.begin(),volumeIntegralGradients.end(),0.0);
-        for(int atomI = 0; atomI < numberOfAtoms; ++atomI){
-            integralMethod->evaluate(atomI, inContext, atomCoordinates, integrals, volumeIntegralGradients, true);
-        } 
+        integralMethod->evaluate(inContext, atomCoordinates, integrals, volumeIntegralGradients, true);
     }
-    // Initialize arrays for storing values.
     
     if(numberOfValues > 0){
         int numDerivs = valueParamDerivExpressions[0].size(); //number of parameter derivatives
-        values.resize(numberOfValues);
+        values.resize(numberOfValues,vector<double>(numberOfAtoms,0.0));
         dEdI.resize(numberOfIntegrals, vector<double>(numberOfAtoms, 0.0));
         dEdV.resize(numberOfValues, vector<double>(numberOfAtoms, 0.0));
         dValuedParam.resize(numberOfValues);
         for (int i = 0; i < numberOfValues; i++)
             dValuedParam[i].resize(numDerivs, vector<double>(numberOfAtoms, 0.0));
-
         // First calculate the computed values.
-
         for (int valueIndex = 0; valueIndex < numberOfValues; valueIndex++) {
             calculateSingleParticleValue(valueIndex, numberOfAtoms, atomCoordinates, atomParameters);
         }
     }
-
-    //cout<<values[0].size()<<endl;
 
     // Now calculate the energy and its derivates.
 
@@ -193,15 +188,9 @@ void CharmmReferenceGBMV::calculateIxn(vector<Vec3>& atomCoordinates, double** a
     // Apply the chain rule to evaluate forces.
 
     calculateChainRuleForces(numberOfAtoms, atomCoordinates, atomParameters, exclusions, forces, energyParamDerivs);
-    /*
-    for(int i=0; i<numberOfAtoms; i++){
-        cout<<dEdI[0][i]<<" "<<dEdI[1][i]<<" "<<dEdV[0][i]<<endl;
-    }
-    */
 }
 
 void CharmmReferenceGBMV::calculateSingleParticleValue(int index, int numAtoms, vector<Vec3>& atomCoordinates, double** atomParameters) {
-    values[index].resize(numAtoms);
     for (int i = 0; i < numAtoms; i++) {
         expressionSet.setVariable(xIndex, atomCoordinates[i][0]);
         expressionSet.setVariable(yIndex, atomCoordinates[i][1]);
