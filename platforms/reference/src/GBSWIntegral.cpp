@@ -37,7 +37,7 @@ GBSWIntegral::GBSWIntegral(){
     int nRadialPoints = 24; 
 
     //rule of Lebedev quadrature for spherical integral
-    int ruleLebedev = 3; //3->38points 4->50points
+    int ruleLebedev = 4; //3->38points 4->50points
     vector<vector<double> > radialQuad = CharmmQuadrature::GaussLegendre(_r0, _r1, nRadialPoints);
     vector<vector<double> > sphericalQuad = CharmmQuadrature::Lebedev(ruleLebedev);
     _quad.resize(radialQuad.size()*sphericalQuad.size(), vector<double>(5,0.0));
@@ -57,7 +57,7 @@ GBSWIntegral::GBSWIntegral(){
 
     //lookup table parameters
     setLookupTableGridLength(0.15); //0.15nm
-    setLookupTableBufferLength(0.00+_sw); //0.20nm
+    setLookupTableBufferLength(0.01+_sw); //0.20nm
 }
 
 void GBSWIntegral::initialize(const OpenMM::System& system, const OpenMM::CharmmGBMVForce& force){

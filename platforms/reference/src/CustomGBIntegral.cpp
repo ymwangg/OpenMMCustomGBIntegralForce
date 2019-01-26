@@ -12,7 +12,7 @@ using namespace::std;
 CustomGBIntegral::CustomGBIntegral(): _periodic(false) {
     _lookupTableBufferLength = 0.03; //0.20 nm + _sw
     _lookupTableGridLength = 0.15; //0.15 nm
-    _lookupTableSize = 32;
+    _lookupTableSize = 64;
 }
 
 CustomGBIntegral::~CustomGBIntegral(){
@@ -34,9 +34,6 @@ void CustomGBIntegral::setLookupTableBufferLength(double length){
 }
 
 void CustomGBIntegral::computeLookupTable(const std::vector<OpenMM::Vec3>& atomCoordinates){
-    auto start = std::chrono::system_clock::now();
-    _lookupTableGridLength = 0.15;
-    _lookupTableBufferLength = 0.04;
     //_lookupTable;
     //_r1;
     int numParticles = atomCoordinates.size();
@@ -149,7 +146,7 @@ void CustomGBIntegral::computeLookupTable(const std::vector<OpenMM::Vec3>& atomC
                                 _lookupTable[idx][_lookupTableNumAtoms[idx]] = atomI;
                                 _lookupTableNumAtoms[idx] ++;
                             }else{
-                                printf("warning%d\n",idx);
+                                //printf("warning%d\n",idx);
                             }
                         }
                     }
@@ -225,9 +222,10 @@ void CustomGBIntegral::computeLookupTable(const std::vector<OpenMM::Vec3>& atomC
             }
         }
     } //end not periodic
-    long sum = 0;
-    for(auto &c : _lookupTableNumAtoms) sum += c;
-    cout<<"total number of atoms in lookup table = "<<sum<<endl;
+    //long sum = 0;
+    //for(auto &c : _lookupTableNumAtoms) sum += c;
+    //cout<<"total number of atoms in lookup table = "<<sum<<endl;
+
     /**
     for(int i=0; i<_lookupTableNumberOfGridPoints[0]; i++){
         for(int j=0; j<_lookupTableNumberOfGridPoints[1]; j++){
@@ -243,9 +241,6 @@ void CustomGBIntegral::computeLookupTable(const std::vector<OpenMM::Vec3>& atomC
         }    
     }
     */
-    auto end = std::chrono::system_clock::now();
-    std::chrono::duration<double> elapsed_seconds = end-start;
-    cout<<"building lookupTable elapsed time: " << elapsed_seconds.count()<<endl;
     //put the closest atom to the grid point in the first place
     /*
     OpenMM::Vec3 point;

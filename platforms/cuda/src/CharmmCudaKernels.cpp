@@ -23,8 +23,11 @@
  * You should have received a copy of the GNU Lesser General Public License   *
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.      *
  * -------------------------------------------------------------------------- */
+#include <chrono>
+#define BEGIN auto start = std::chrono::system_clock::now();
+#define END auto end = std::chrono::system_clock::now();std::chrono::duration<double> elapsed_seconds = end-start;cout<<"calculateIxn elapsed time: " << elapsed_seconds.count()<<endl;
+
 #include "CustomGBIntegral.h"
-#include "GBSWIntegral.h"
 
 #include "CharmmCudaKernels.h"
 #include "CudaKernels.h"
@@ -132,15 +135,7 @@ void CudaCalcCharmmGBMVForceKernel::initialize(const System& system, const Charm
     cu.setAsCurrent();
 
     numAtoms = force.getNumParticles();
-    integralMethod = new GBSWIntegral();
-    integralMethod->initialize(system,force);
-    integralGradients.initialize<REAL3>(cu, force.getNumGBIntegrals()*force.getNumParticles()*force.getNumParticles(), "CharmmGBMVIntegralGradients");
     /*
-    unsigned int num_points = 150*150*150;
-    lookupTable.initialize<float*>(cu, num_points, "CharmmGBMVLookupTable");
-    lookupTableNumAtoms.initialize<int>(cu, num_points, "CharmmGBMVLookupTableNumAtoms");
-    CUmodule module = cu.createModule(CudaCharmmKernelSources::lookupTable);
-    lookupTableKernel = cu.getKernel(module, "computeLookupTable");
     */
     if (cu.getPlatformData().contexts.size() > 1) 
         throw OpenMMException("CharmmGBMVForce does not support using multiple CUDA devices");
@@ -175,7 +170,7 @@ void CudaCalcCharmmGBMVForceKernel::initialize(const System& system, const Charm
     int paddedNumParticles = cu.getPaddedNumAtoms(); //
     int numParams = force.getNumPerParticleParameters(); //number of per particle parameters
     params = new CudaParameterSet(cu, force.getNumPerParticleParameters(), paddedNumParticles, "CharmmGBMVParameters", true);
-    computedIntegrals = new CudaParameterSet(cu, force.getNumGBIntegrals(), paddedNumParticles, "CharmmGBMVComputedIntegrals", true, cu.getUseDoublePrecision());
+    computedIntegrals = new CudaParameterSet(cu, force.getNumGBIntegrals(), paddedNumParticles, "CharmmGBMVComputedIntegrals", true);
     computedValues = new CudaParameterSet(cu, force.getNumComputedValues(), paddedNumParticles, "CharmmGBMVComputedValues", true, cu.getUseDoublePrecision());
 
     if (force.getNumGlobalParameters() > 0)
@@ -410,7 +405,7 @@ void CudaCalcCharmmGBMVForceKernel::initialize(const System& system, const Charm
         replacements["COMPUTE_VALUES"] = reductionSource.str();
         map<string, string> defines;
         defines["NUM_ATOMS"] = cu.intToString(cu.getNumAtoms());
-        cout<<cu.replaceStrings(CudaCharmmKernelSources::customGBValuePerParticle, replacements)<<endl;
+        //cout<<cu.replaceStrings(CudaCharmmKernelSources::customGBValuePerParticle, replacements)<<endl;
         CUmodule module = cu.createModule(cu.replaceStrings(CudaCharmmKernelSources::customGBValuePerParticle, replacements), defines);
         perParticleValueKernel = cu.getKernel(module, "computePerParticleValues");
     }
@@ -603,7 +598,7 @@ void CudaCalcCharmmGBMVForceKernel::initialize(const System& system, const Charm
         pairEnergyDefines["NUM_BLOCKS"] = cu.intToString(cu.getNumAtomBlocks());
         pairEnergyDefines["TILE_SIZE"] = cu.intToString(CudaContext::TileSize);
         pairEnergySrc = cu.replaceStrings(CudaCharmmKernelSources::customGBEnergyN2, replacements);
-        cout<<pairEnergySrc<<endl;
+        //cout<<pairEnergySrc<<endl;
     }
     {
         // Create the kernel to reduce the derivatives and calculate per-particle energy terms.
@@ -748,7 +743,7 @@ void CudaCalcCharmmGBMVForceKernel::initialize(const System& system, const Charm
         map<string, string> defines;
         defines["NUM_ATOMS"] = cu.intToString(cu.getNumAtoms());
         defines["PADDED_NUM_ATOMS"] = cu.intToString(cu.getPaddedNumAtoms());
-        cout<<cu.replaceStrings(CudaCharmmKernelSources::customGBEnergyPerParticle, replacements)<<endl;
+        //cout<<cu.replaceStrings(CudaCharmmKernelSources::customGBEnergyPerParticle, replacements)<<endl;
         CUmodule module = cu.createModule(cu.replaceStrings(CudaCharmmKernelSources::customGBEnergyPerParticle, replacements), defines);
         perParticleEnergyKernel = cu.getKernel(module, "computePerParticleEnergy");
     }
@@ -855,6 +850,10 @@ void CudaCalcCharmmGBMVForceKernel::initialize(const System& system, const Charm
         string source = "\n";
         cu.getNonbondedUtilities().addInteraction(useCutoff, usePeriodic, force.getNumExclusions() > 0, cutoff, exclusionList, source, force.getForceGroup());
     }
+    {
+        integralMethod = new CustomGBIntegral(cu,system,force,computedIntegrals);
+        integralGradients.initialize<REAL3>(cu, force.getNumGBIntegrals()*force.getNumParticles()*force.getNumParticles(), "CharmmGBMVIntegralGradients");
+    }
     info = new ForceInfo(force);
     cu.addForce(info);
     cu.addAutoclearBuffer(longEnergyDerivs);
@@ -862,61 +861,28 @@ void CudaCalcCharmmGBMVForceKernel::initialize(const System& system, const Charm
 }
 
 double CudaCalcCharmmGBMVForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
-    vector<REAL4> oldPosq(cu.getPaddedNumAtoms());
-    cu.getPosq().download(oldPosq);
-    std::vector<OpenMM::Vec3> posData(numAtoms,OpenMM::Vec3());
-    for (int i=0; i<numAtoms; i++){
-        posData[i][0] = oldPosq[i].x;
-        posData[i][1] = oldPosq[i].y;
-        posData[i][2] = oldPosq[i].z;
-    }
-    //computedIntegrals;integralGradients;
+    /*
     integralMethod->BeforeComputation(context, posData);
     vector<vector<REAL> > tmpIntegrals;
     tmpIntegrals.resize(cu.getPaddedNumAtoms(),vector<REAL>(numComputedIntegrals));
     vector<REAL3> tmpIntegralGradients;
     tmpIntegralGradients.resize(numComputedIntegrals*numAtoms*numAtoms);
 
-    for(int atomI = 0; atomI < numAtoms; ++atomI){
-        vector<double> tmpValues;
-        std::vector<std::vector<OpenMM::Vec3> > tmpGradients;
-        integralMethod->evaluate(atomI, context, posData, tmpValues, tmpGradients, true);
-        for(int i=0; i<numComputedIntegrals; ++i){
-            tmpIntegrals[atomI][i]=tmpValues[i];
-            for(int m = 0; m < numAtoms; ++m){
-                tmpIntegralGradients[i*numAtoms*numAtoms + atomI*numAtoms + m].x = tmpGradients[i][m][0];
-                tmpIntegralGradients[i*numAtoms*numAtoms + atomI*numAtoms + m].y = tmpGradients[i][m][1];
-                tmpIntegralGradients[i*numAtoms*numAtoms + atomI*numAtoms + m].z = tmpGradients[i][m][2];
-            }
-        }
-    } 
-
-    /*
-    for(int i = 0; i < numComputedIntegrals; ++i){
-        for(int atomI=0; atomI<numAtoms; ++atomI){
-            for(int atomJ=0; atomJ<numAtoms; ++atomJ){
-                int idx = i*numAtoms*numAtoms + atomJ*numAtoms + atomI;
-                float3 tmp = tmpIntegralGradients[idx];
-                printf("%d %d %f %f %f\n",atomJ,atomI,tmp.x,tmp.y,tmp.z);
-            }
-        }
-    }
-    */
     computedIntegrals->setParameterValues(tmpIntegrals);
     integralGradients.upload(tmpIntegralGradients);
+    */
     
     /*
-    lookupTableArgs.push_back(&cu.getPosq().getDevicePointer());
-    lookupTable.getDevicePointer();
-    lookupTableNumAtoms.getDevicePointer();
-    lookupTableArgs.push_back(cu.getPeriodicBoxSizePointer());
-    lookupTableArgs.push_back(cu.getInvPeriodicBoxSizePointer());
-    lookupTableArgs.push_back(cu.getPeriodicBoxVecXPointer());
-    lookupTableArgs.push_back(cu.getPeriodicBoxVecYPointer());
-    lookupTableArgs.push_back(cu.getPeriodicBoxVecZPointer());
-    cu.executeKernel(lookupTableKernel, &lookupTableArgs[0],cu.getPaddedNumAtoms());
-    return 0.0;
-    */
+    BEGIN
+        for(int i=0; i<1000; i++){
+            integralMethod->computeLookupTable();
+            integralMethod->evaluate();
+        }
+    END
+        */
+    integralMethod->computeLookupTable();
+    integralMethod->evaluate();
+
     CudaNonbondedUtilities& nb = cu.getNonbondedUtilities();
     if (!hasInitializedKernels) {
         hasInitializedKernels = true;
@@ -924,9 +890,6 @@ double CudaCalcCharmmGBMVForceKernel::execute(ContextImpl& context, bool include
         // These two kernels can't be compiled in initialize(), because the nonbonded utilities object
         // has not yet been initialized then.
 
-        {
-            //deleted
-        }
         {
             int numExclusionTiles = cu.getNonbondedUtilities().getExclusionTiles().getSize();
             pairEnergyDefines["NUM_TILES_WITH_EXCLUSIONS"] = cu.intToString(numExclusionTiles);

@@ -159,6 +159,13 @@ void CharmmReferenceGBMV::calculateIxn(vector<Vec3>& atomCoordinates, double** a
     if(numberOfIntegrals > 0){
         integralMethod->evaluate(inContext, atomCoordinates, integrals, volumeIntegralGradients, true);
     }
+    for(int i=0; i<numberOfAtoms; i++){
+        printf("%f %f %f -> ",atomCoordinates[i][0],atomCoordinates[i][1],atomCoordinates[i][2]);
+        for(int j=0; j<numberOfIntegrals; j++){
+            printf("%f ",integrals[j*numberOfAtoms+i]);
+        }
+        printf("\n");
+    }
     
     if(numberOfValues > 0){
         int numDerivs = valueParamDerivExpressions[0].size(); //number of parameter derivatives
@@ -172,6 +179,10 @@ void CharmmReferenceGBMV::calculateIxn(vector<Vec3>& atomCoordinates, double** a
         for (int valueIndex = 0; valueIndex < numberOfValues; valueIndex++) {
             calculateSingleParticleValue(valueIndex, numberOfAtoms, atomCoordinates, atomParameters);
         }
+    }
+    
+    for(int i=0; i<numberOfAtoms; i++){
+        //printf("%f\n",values[0][i]*10);
     }
 
     // Now calculate the energy and its derivates.

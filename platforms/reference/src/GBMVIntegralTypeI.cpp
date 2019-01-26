@@ -32,7 +32,7 @@ GBMVIntegralTypeI::GBMVIntegralTypeI(){
     int nRadialPoints = 24; 
 
     //rule of Lebedev quadrature for spherical integral
-    int ruleLebedev = 4;
+    int ruleLebedev = 3;
     vector<vector<double> > radialQuad = CharmmQuadrature::GaussLegendre(_r0, _r1, nRadialPoints);
     vector<vector<double> > sphericalQuad = CharmmQuadrature::Lebedev(ruleLebedev);
     _quad.resize(radialQuad.size()*sphericalQuad.size(), vector<double>(5,0.0));
@@ -52,7 +52,7 @@ GBMVIntegralTypeI::GBMVIntegralTypeI(){
 
     //lookup table parameters
     setLookupTableGridLength(0.15); //0.15nm
-    setLookupTableBufferLength(0.20 + 0.21); //0.20nm
+    setLookupTableBufferLength(0.4); //0.20nm
 }
 
 void GBMVIntegralTypeI::initialize(const OpenMM::System& system, const OpenMM::CharmmGBMVForce& force){
@@ -108,20 +108,19 @@ void GBMVIntegralTypeI::FinishComputation(ContextImpl& context, const std::vecto
 }
 
 void GBMVIntegralTypeI::evaluate(ContextImpl& context, const std::vector<OpenMM::Vec3>& atomCoordinates, std::vector<double>& integrals, std::vector<double>& gradients, const bool includeGradient){
+    // flush integrals and gradients
     std::fill(integrals.begin(),integrals.end(),0.0);
     std::fill(gradients.begin(),gradients.end(),0.0);
     vector<double> prefactors(_numIntegrals);
     OpenMM::Vec3 r_q;
-    double radius_q; 
-    double w_q;
     vector<int>* atomList;
     for(int q=0; q<_quad.size(); ++q){
-        radius_q = _quad[q][3];
-        w_q = _quad[q][4];
+        double radius_q = _quad[q][3];
+        double w_q = _quad[q][4];
         for(int atomI=0; atomI<_numParticles; ++atomI){
             for(int i=0; i<3; ++i) 
                 r_q[i] = atomCoordinates[atomI][i] + _quad[q][i];
-            int numListAtoms;
+            int numListAtoms = 0;
             getLookupTableAtomList(r_q, atomList, numListAtoms);
             double pre_sum = computeVolumeFromLookupTable(atomCoordinates, r_q, *atomList, numListAtoms);
             double V_q = 1.0/(1.0 + pre_sum);
@@ -186,8 +185,8 @@ void GBMVIntegralTypeI::computeGradientPerQuadFromLookupTable(const int atomI, c
         int grad_idx_i = integralIdx*_numParticles*_numParticles*3 +  atomI*_numParticles*3 + atomI*3;
         int grad_idx_j = integralIdx*_numParticles*_numParticles*3 +  atomI*_numParticles*3 + atomJ*3;
         for(int n = 0; n < 3; ++n){
-            gradients[grad_idx_i + n] += r_qj_vec[n];
-            gradients[grad_idx_j + n] -= r_qj_vec[n];
+            gradients[grad_idx_i + n] -= r_qj_vec[n];
+            gradients[grad_idx_j + n] += r_qj_vec[n];
         }  
     }
     return;

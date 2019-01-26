@@ -86,9 +86,7 @@ private:
     CudaParameterSet* energyDerivs;
     CudaParameterSet* energyDerivChain;
     std::vector<CudaParameterSet*> dValuedParam;
-    CudaArray lookupTable;
-    CudaArray lookupTableNumAtoms;
-    
+
     CudaArray longEnergyDerivs;
     CudaArray globals;
     CudaArray valueBuffers;
@@ -98,8 +96,8 @@ private:
     std::vector<CudaArray> tabulatedFunctions;
     std::vector<bool> pairValueUsesParam, pairEnergyUsesParam, pairEnergyUsesValue, pairEnergyUsesIntegral;
     const System& system;
-    CUfunction  lookupTableKernel, perParticleValueKernel, pairEnergyKernel, perParticleEnergyKernel, gradientChainRuleKernel;
-    std::vector<void*> lookupTableArgs, pairValueArgs, perParticleValueArgs, pairEnergyArgs, perParticleEnergyArgs, gradientChainRuleArgs;
+    CUfunction  perParticleValueKernel, pairEnergyKernel, perParticleEnergyKernel, gradientChainRuleKernel;
+    std::vector<void*> pairValueArgs, perParticleValueArgs, pairEnergyArgs, perParticleEnergyArgs, gradientChainRuleArgs;
     std::string pairValueSrc, pairEnergySrc;
     std::map<std::string, std::string> pairValueDefines, pairEnergyDefines;
 };
