@@ -5,7 +5,8 @@ float warpReduceSum(float val) {
     return val;
 }
 
-extern "C" __global__ void computeGBSWIntegral(const real4* __restrict__ posq 
+extern "C" __global__ void reduceGBSWForce(unsigned long long* __restrict__ forceBuffers,
+        const real4* __restrict__ posq 
 #ifdef USE_PERIODIC
         ,const real4 periodicBoxSize, const real4 invPeriodicBoxSize
 #endif
@@ -41,32 +42,34 @@ PARAM_ARGS)
         //compute Volume
         BEFORE_VOLUME
         for(int i = 0; i<numLookupTableAtoms; i++){
-        //for(int atomJ = 0; atomJ<NUM_ATOMS; atomJ++){
-            int atomJ = lookupTable[lookupTableIdx*LOOKUPTABLE_SIZE + i];
+            float3 forceI = make_float3(0,0,0);
+            float3 forceJ = make_float3(0,0,0);
+            int atomJ = lookupTable[lookupTableIdx*25 + i];
             float4 posJ = posq[atomJ];
             float3 delta = make_float3(posJ.x - quadPosR.x, 
                     posJ.y - quadPosR.y, posJ.z - quadPosR.z);
 #ifdef USE_PERIODIC
             APPLY_PERIODIC_TO_DELTA(delta);
 #endif
-            //COMPUTE_VOLUME
             float sw = 0.03;
             float sw3 = sw*sw*sw;
             float deltaR_qj = sqrt(delta.x*delta.x + delta.y*delta.y + delta.z*delta.z);
             float atomicRadii_j = (radius[atomJ]+0.03)*0.9520;
             float dr = deltaR_qj - atomicRadii_j;
+            float dr2 = dr*dr;
             float dr3 = dr*dr*dr;
-            if(deltaR_qj <= atomicRadii_j - sw){
-                V = 0.0;
-                break;
-            }else if(deltaR_qj >= atomicRadii_j + sw){
-                continue;
+            float u_j;
+            float duj_drq;
+            if((deltaR_qj > atomicRadii_j - sw) && (deltaR_qj < atomicRadii_j + sw)){
+                u_j = 0.5 + 3.0/(4.0*sw) * dr - 1.0/(4.0*sw3) * dr3;
+                duj_drq = 3.0/(4.0*sw) - 3.0/(4.0*sw3) * dr2;
             }else{
-                V *= 0.5 + 3.0/(4.0*sw) * dr - 1.0/(4.0*sw3) * dr3;
-            }  
+                continue;
+            } 
+            float chain = (duj_drq*V/u_j)/deltaR_qj;
+            COMPUTE_VOLUME
         }
         AFTER_VOLUME
-        REDUCTION
         // reduction
         /*
         int lane = threadIdx.x % warpSize;

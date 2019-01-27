@@ -77,7 +77,6 @@ private:
     double cutoff;
     bool hasInitializedKernels, needParameterGradient, needEnergyParamDerivs;
     int maxTiles, numComputedValues, numComputedIntegrals;
-    int numAtoms;
     CudaContext& cu;
     ForceInfo* info;
     CudaParameterSet* params;
@@ -90,7 +89,6 @@ private:
     CudaArray longEnergyDerivs;
     CudaArray globals;
     CudaArray valueBuffers;
-    CudaArray integralGradients;
     std::vector<std::string> globalParamNames;
     std::vector<float> globalParamValues;
     std::vector<CudaArray> tabulatedFunctions;
