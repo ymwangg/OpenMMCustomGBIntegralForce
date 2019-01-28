@@ -30,6 +30,7 @@ class CustomGBIntegral{
     protected:
         std::vector<double> _atomicRadii;
     private:
+        CharmmGBMVForce::GBIntegralType integralType;
         CudaParameterSet* radius;
         CudaParameterSet* computedIntegrals;
         CudaParameterSet* dEdI;
@@ -42,7 +43,10 @@ class CustomGBIntegral{
         CudaArray d_lookupTableGridStep;
         CudaArray d_lookupTableNumGridPoints;
         CudaArray d_quad;
+        //for GBSW
         CudaArray d_volume;
+        //for GBMV1
+        CudaArray d_presum;
         std::vector<CudaArray> d_quad_w;
         float _r0;
         float _r1;
