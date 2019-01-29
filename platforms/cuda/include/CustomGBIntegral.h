@@ -47,6 +47,8 @@ class CustomGBIntegral{
         CudaArray d_volume;
         //for GBMV1
         CudaArray d_presum;
+        //for GBMV2
+        CudaArray d_presum1, d_presum2, d_presum3, d_prevector;
         std::vector<CudaArray> d_quad_w;
         float _r0;
         float _r1;

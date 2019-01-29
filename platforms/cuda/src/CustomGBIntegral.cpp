@@ -31,6 +31,16 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
                 constants["LAMBDA"] = to_string(0.1);
                 break;
             }
+        case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII :
+            {
+                constants["GAMMA"] = to_string(0.44);
+                constants["BETA"] = to_string(-20);
+                constants["LAMBDA"] = to_string(0.5);
+                constants["P1"] = to_string(0.45);
+                constants["P2"] = to_string(1.25);
+                constants["S0"] = to_string(0.7);
+                break;
+            }
     }
 
     {
@@ -93,7 +103,23 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
         d_lookupTableGridStep.initialize<float>(cu,3,"CustomGBLookupTableGridStep");
         d_lookupTableNumGridPoints.upload(_lookupTableNumberOfGridPoints);
         d_lookupTableGridStep.upload(step);
-        _lookupTableBufferLength  = 0.01 + 0.03;
+        switch(integralType){
+            case CharmmGBMVForce::GBIntegralType::GBSWIntegral :
+                {
+                    _lookupTableBufferLength = 0.03;
+                    break;
+                }
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI : 
+                {
+                    _lookupTableBufferLength  = 0.20;
+                    break;
+                }
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII :
+                {
+                    _lookupTableBufferLength  = 0.20;
+                    break;
+                }
+        }
         map<string, string> defines;
         defines["NUM_ATOMS"] = cu.intToString(cu.getNumAtoms());
         CUmodule module = cu.createModule(cu.replaceStrings(CudaCharmmKernelSources::lookupTable,defines));
@@ -150,8 +176,16 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
                 d_volume.initialize<float>(cu,cu.getNumAtoms()*_numQuadPoints,"CustomGBVolume"); break;
             case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI : 
                 d_presum.initialize<float>(cu,cu.getNumAtoms()*_numQuadPoints,"CustomGBVolume"); break;
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII :
+                {
+                    d_presum1.initialize<float>(cu,cu.getNumAtoms()*_numQuadPoints,"CustomGBVolume");
+                    d_presum2.initialize<float>(cu,cu.getNumAtoms()*_numQuadPoints,"CustomGBVolume");
+                    d_presum3.initialize<float>(cu,cu.getNumAtoms()*_numQuadPoints,"CustomGBVolume");
+                    d_prevector.initialize<float3>(cu,cu.getNumAtoms()*_numQuadPoints,"CustomGBVolume"); 
+                    break;
+                }
+
         }
-        d_volume.initialize<float>(cu,cu.getNumAtoms()*_numQuadPoints,"CustomGBVolume");
         stringstream paramArgs, initParams, beforeVolume, computeVolume, afterVolume, reduction;
         paramArgs << ",const float* __restrict__ radius";
         paramArgs << ",const int* __restrict__ lookupTable";
@@ -170,6 +204,14 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
                 paramArgs << ",float* __restrict__ volume"; break;
             case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI : 
                 paramArgs << ",float* __restrict__ presum"; break;
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII : 
+                {
+                    paramArgs << ",float* __restrict__ presum1"; 
+                    paramArgs << ",float* __restrict__ presum2"; 
+                    paramArgs << ",float* __restrict__ presum3"; 
+                    paramArgs << ",float3* __restrict__ prevector"; 
+                    break;
+                }
         }
         for(int i=0; i< _numIntegrals; i++){
             initParams << "__shared__ float tmp_result" << cu.intToString(i) << "[32];\n";
@@ -196,6 +238,24 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
                     afterVolume << "float V = 1.0 - 1.0/(1.0 + tmp_presum);\n";
                     break;
                 }
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII :
+                {
+                    beforeVolume << "float sum = 0;\n";
+                    beforeVolume << "float sum1 = 0;\n";
+                    beforeVolume << "float sum2 = 0;\n";
+                    beforeVolume << "float sum3 = 0;\n";
+                    beforeVolume << "float3 vector_sum = make_float3(0,0,0);\n";
+                    afterVolume << "sum3 = sqrtf(vector_sum.x*vector_sum.x + vector_sum.y*vector_sum.y + vector_sum.z*vector_sum.z);\n";
+                    afterVolume << "sum = S0*sum1*sum2 / (sum3*sum3);\n";
+                    afterVolume << "float tmp_presum = sum3==0 ? 0 : expf(BETA*(sum - LAMBDA));\n";
+                    afterVolume << "float V = 1.0 - 1.0/(1.0 + tmp_presum);\n";
+                    afterVolume << "presum1[atomI*NUM_QUADRATURE_POINTS + quadIdx] = sum1;\n";
+                    afterVolume << "presum2[atomI*NUM_QUADRATURE_POINTS + quadIdx] = sum2;\n";
+                    afterVolume << "presum3[atomI*NUM_QUADRATURE_POINTS + quadIdx] = sum3;\n";
+                    afterVolume << "prevector[atomI*NUM_QUADRATURE_POINTS + quadIdx] = vector_sum;\n";
+                    //afterVolume << "printf(\"%f %f %f\\n\",sum1,sum2,sum3);";
+                    break;
+                }
         }
         for(int i=0; i<_numIntegrals; i++){
             afterVolume << "float tmp_integral" << cu.intToString(i) << " = quad_w" << cu.intToString(i) <<"[quadIdx] * (1.0 - V);\n";
@@ -220,6 +280,8 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
                 computeVolume << CudaCharmmKernelSources::computeGBSWVolume; break;
             case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI : 
                 computeVolume << CudaCharmmKernelSources::computeGBMV1Volume; break;
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII : 
+                computeVolume << CudaCharmmKernelSources::computeGBMV2Volume; break;
         }
         map<string, string> defines, macroDefines;
         defines["NUM_ATOMS"] = cu.intToString(cu.getNumAtoms());
@@ -261,6 +323,14 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
                 paramArgs << ",const float* __restrict__ volume"; break;
             case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI : 
                 paramArgs << ",const float* __restrict__ presum"; break;
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII : 
+                {
+                    paramArgs << ",const float* __restrict__ presum1";
+                    paramArgs << ",const float* __restrict__ presum2";
+                    paramArgs << ",const float* __restrict__ presum3";
+                    paramArgs << ",const float3* __restrict__ prevector";
+                    break;
+                }
         }
 
         //loadVolume << "float tmp_presum = presum[atomI*NUM_QUADRATURE_POINTS + quadIdx];\n";
@@ -278,6 +348,17 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
                     beforeVolume << "float factor = -1.0/((1.0+tmp_presum)*(1.0+tmp_presum)) * (BETA*tmp_presum);\n";
                     break;
                 }
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII : 
+                {
+                    beforeVolume << "float sum1 = presum1[atomI*NUM_QUADRATURE_POINTS + quadIdx];\n";
+                    beforeVolume << "float sum2 = presum2[atomI*NUM_QUADRATURE_POINTS + quadIdx];\n";
+                    beforeVolume << "float sum3 = presum3[atomI*NUM_QUADRATURE_POINTS + quadIdx];\n";
+                    beforeVolume << "float3 vector_sum = prevector[atomI*NUM_QUADRATURE_POINTS + quadIdx];\n";
+                    beforeVolume << "float sum = S0 * sum1 * sum2 / (sum3*sum3);\n";
+                    beforeVolume << "float tmp_presum = expf(BETA*(sum - LAMBDA));\n";
+                    beforeVolume << "float factor = -1.0/((1.0+tmp_presum)*(1.0+tmp_presum)) * (BETA*tmp_presum) * S0;\n";
+                    break;
+                }
 
         }
 
@@ -286,13 +367,43 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
                 " = quad_w" << cu.intToString(i) << "[quadIdx] * dEdI" <<
                 cu.intToString(i) << "[atomI];\n";
         }
-        for(int i=0; i<_numIntegrals; i++){
-            applyChainRule << "forceI.x -= chain" << cu.intToString(i) <<" * dIdr * delta.x;\n";
-            applyChainRule << "forceI.y -= chain" << cu.intToString(i) <<" * dIdr * delta.y;\n";
-            applyChainRule << "forceI.z -= chain" << cu.intToString(i) <<" * dIdr * delta.z;\n";
-            applyChainRule << "forceJ.x += chain" << cu.intToString(i) <<" * dIdr * delta.x;\n";
-            applyChainRule << "forceJ.y += chain" << cu.intToString(i) <<" * dIdr * delta.y;\n";
-            applyChainRule << "forceJ.z += chain" << cu.intToString(i) <<" * dIdr * delta.z;\n";
+        switch(integralType){
+            case CharmmGBMVForce::GBIntegralType::GBSWIntegral :
+                {
+                    for(int i=0; i<_numIntegrals; i++){
+                        applyChainRule << "forceI.x -= chain" << cu.intToString(i) <<" * dIdr * delta.x;\n";
+                        applyChainRule << "forceI.y -= chain" << cu.intToString(i) <<" * dIdr * delta.y;\n";
+                        applyChainRule << "forceI.z -= chain" << cu.intToString(i) <<" * dIdr * delta.z;\n";
+                        applyChainRule << "forceJ.x += chain" << cu.intToString(i) <<" * dIdr * delta.x;\n";
+                        applyChainRule << "forceJ.y += chain" << cu.intToString(i) <<" * dIdr * delta.y;\n";
+                        applyChainRule << "forceJ.z += chain" << cu.intToString(i) <<" * dIdr * delta.z;\n";
+                    }
+                    break;
+                }
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI :
+                {
+                    for(int i=0; i<_numIntegrals; i++){
+                        applyChainRule << "forceI.x -= chain" << cu.intToString(i) <<" * dIdr * delta.x;\n";
+                        applyChainRule << "forceI.y -= chain" << cu.intToString(i) <<" * dIdr * delta.y;\n";
+                        applyChainRule << "forceI.z -= chain" << cu.intToString(i) <<" * dIdr * delta.z;\n";
+                        applyChainRule << "forceJ.x += chain" << cu.intToString(i) <<" * dIdr * delta.x;\n";
+                        applyChainRule << "forceJ.y += chain" << cu.intToString(i) <<" * dIdr * delta.y;\n";
+                        applyChainRule << "forceJ.z += chain" << cu.intToString(i) <<" * dIdr * delta.z;\n";
+                    }
+                    break;
+                }
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII :
+                {
+                    for(int i=0; i<_numIntegrals; i++){
+                        applyChainRule << "forceI.x -= chain" << cu.intToString(i) <<" * dIdr_vec.x;\n";
+                        applyChainRule << "forceI.y -= chain" << cu.intToString(i) <<" * dIdr_vec.y;\n";
+                        applyChainRule << "forceI.z -= chain" << cu.intToString(i) <<" * dIdr_vec.z;\n";
+                        applyChainRule << "forceJ.x += chain" << cu.intToString(i) <<" * dIdr_vec.x;\n";
+                        applyChainRule << "forceJ.y += chain" << cu.intToString(i) <<" * dIdr_vec.y;\n";
+                        applyChainRule << "forceJ.z += chain" << cu.intToString(i) <<" * dIdr_vec.z;\n";
+                    }
+                    break;
+                }
         }
 
         switch(integralType){
@@ -300,6 +411,8 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
                 computeForce << CudaCharmmKernelSources::computeGBSWForce; break;
             case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI : 
                 computeForce << CudaCharmmKernelSources::computeGBMV1Force; break;
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII : 
+                computeForce << CudaCharmmKernelSources::computeGBMV2Force; break;
         }
         map<string, string> defines, macroDefines;
         defines["NUM_ATOMS"] = cu.intToString(cu.getNumAtoms());
@@ -356,6 +469,14 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
                 integralArgs.push_back(&d_volume.getDevicePointer()); break;
             case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI : 
                 integralArgs.push_back(&d_presum.getDevicePointer()); break;
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII : 
+                {
+                    integralArgs.push_back(&d_presum1.getDevicePointer());
+                    integralArgs.push_back(&d_presum2.getDevicePointer());
+                    integralArgs.push_back(&d_presum3.getDevicePointer());
+                    integralArgs.push_back(&d_prevector.getDevicePointer()); 
+                    break;
+                }
         }
     }
     {
@@ -379,6 +500,14 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
                 reduceForceArgs.push_back(&d_volume.getDevicePointer()); break;
             case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI : 
                 reduceForceArgs.push_back(&d_presum.getDevicePointer()); break;
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII : 
+                {
+                    reduceForceArgs.push_back(&d_presum1.getDevicePointer());
+                    reduceForceArgs.push_back(&d_presum2.getDevicePointer());
+                    reduceForceArgs.push_back(&d_presum3.getDevicePointer());
+                    reduceForceArgs.push_back(&d_prevector.getDevicePointer()); 
+                    break;
+                }
         }
     }
     printf("done with setting up integral\n");
