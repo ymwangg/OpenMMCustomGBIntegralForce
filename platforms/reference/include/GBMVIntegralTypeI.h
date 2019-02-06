@@ -19,6 +19,8 @@ class GBMVIntegralTypeI : public CustomGBIntegral {
         void setBoxVectors(OpenMM::Vec3* vectors);
         double computeVolumeFromLookupTable(const std::vector<OpenMM::Vec3>& atomCoordinates, const OpenMM::Vec3& r_q, const std::vector<int>& atomList, const int numListAtoms);
         void computeGradientPerQuadFromLookupTable(const int atomI, const int valueIdx, const std::vector<OpenMM::Vec3>& atomCoordinates,const OpenMM::Vec3& r_q, const double V_q, std::vector<double>& gradients, const double prefactor, const std::vector<int>& atomList, const int numListAtoms);
+        double computeVolume(const std::vector<OpenMM::Vec3>& atomCoordinates, const OpenMM::Vec3& r_q);
+        void computeGradientPerQuad(const int atomI, const int integralIdx, const std::vector<OpenMM::Vec3>& atomCoordinates, const OpenMM::Vec3& r_q, const double pre_sum, std::vector<double>& gradients, const double prefactor);
 
         int _numIntegrals;
         int _numParticles;
@@ -30,6 +32,7 @@ class GBMVIntegralTypeI : public CustomGBIntegral {
         double _lambda;
         double _beta;
         bool _periodic;
+        bool _useLookupTable;
         OpenMM::Vec3 _periodicBoxVectors[3];
 };
 }

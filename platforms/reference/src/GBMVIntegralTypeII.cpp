@@ -17,6 +17,7 @@ static Vec3* extractBoxVectors(ContextImpl& context) {
 }
 
 GBMVIntegralTypeII::GBMVIntegralTypeII(){
+    _useLookupTable = true;
     _periodic = false;
 
     _gamma0 = 0.44;
@@ -36,7 +37,7 @@ GBMVIntegralTypeII::GBMVIntegralTypeII(){
     int nRadialPoints = 24; 
 
     //rule of Lebedev quadrature for spherical integral
-    int ruleLebedev = 4;
+    int ruleLebedev = 3;
     vector<vector<double> > radialQuad = CharmmQuadrature::GaussLegendre(_r0, _r1, nRadialPoints);
     vector<vector<double> > sphericalQuad = CharmmQuadrature::Lebedev(ruleLebedev);
     _quad.resize(radialQuad.size()*sphericalQuad.size(), vector<double>(5,0.0));
@@ -56,7 +57,7 @@ GBMVIntegralTypeII::GBMVIntegralTypeII(){
 
     //lookup table parameters
     setLookupTableGridLength(0.15); //0.15nm
-    setLookupTableBufferLength(0.20 + 0.21); //0.20nm
+    setLookupTableBufferLength(0.21); //0.20nm
 }
 
 void GBMVIntegralTypeII::initialize(const OpenMM::System& system, const OpenMM::CharmmGBMVForce& force){
@@ -127,20 +128,29 @@ void GBMVIntegralTypeII::evaluate(ContextImpl& context, const std::vector<OpenMM
             for(int i=0; i<3; ++i) 
                 r_q[i] = atomCoordinates[atomI][i] + _quad[q][i];
             int numListAtoms;
-            getLookupTableAtomList(r_q, atomList, numListAtoms);
             double sum1, sum2, sum3;
             sum1 = 0.0; sum2 = 0.0; sum3 = 0.0;
             OpenMM::Vec3 denom_vec(0.0, 0.0, 0.0);
-            double pre_sum = computeVolumeFromLookupTable(atomCoordinates, r_q, *atomList, numListAtoms, sum1, sum2, sum3, denom_vec);
-            double V_q = 1.0/(1.0 + pre_sum);
+            double pre_sum;
+            double V_q;
+            if(_useLookupTable){
+                getLookupTableAtomList(r_q, atomList, numListAtoms);
+                pre_sum = computeVolumeFromLookupTable(atomCoordinates, r_q, *atomList, numListAtoms, sum1, sum2, sum3, denom_vec);
+                V_q = (numListAtoms==0 ? 0 : 1.0/(1.0 + pre_sum));
+            }else{
+                pre_sum = computeVolume(atomCoordinates, r_q, sum1, sum2, sum3, denom_vec);
+                V_q = 1.0/(1.0 + pre_sum);
+            }
             for(int i=0; i<_numIntegrals; ++i){
                 int integral_globalIdx = i*_numParticles + atomI;
                 prefactors[i] = w_q/pow(radius_q, _orders[i]);
                 integrals[integral_globalIdx] += prefactors[i]*(V_q);
             }
-            if(includeGradient){
-                for(int i=0; i<_numIntegrals; ++i){
+            for(int i=0; i<_numIntegrals; ++i){
+                if(_useLookupTable){
                     computeGradientPerQuadFromLookupTable(atomI, i, atomCoordinates, r_q, pre_sum, gradients, prefactors[i], *atomList, numListAtoms, sum1, sum2, sum3, denom_vec);
+                }else{
+                    computeGradientPerQuad(atomI, i, atomCoordinates, r_q, pre_sum, gradients, prefactors[i], sum1, sum2, sum3, denom_vec);
                 }
             }
         }
@@ -150,7 +160,7 @@ void GBMVIntegralTypeII::evaluate(ContextImpl& context, const std::vector<OpenMM
 
 
 double GBMVIntegralTypeII::computeVolumeFromLookupTable(const std::vector<OpenMM::Vec3>& atomCoordinates, const OpenMM::Vec3& r_q, const std::vector<int>& atomList, const int numListAtoms, double& sum1, double& sum2, double& sum3, OpenMM::Vec3& denom_vec){
-    if(numListAtoms==0) return 0.0;
+    if(numListAtoms==0) return 0;
     double deltaR[ReferenceForce::LastDeltaRIndex];
     sum1 = 0.0;
     sum2 = 0.0;
@@ -164,8 +174,9 @@ double GBMVIntegralTypeII::computeVolumeFromLookupTable(const std::vector<OpenMM
         double deltaR2 = deltaR_qj*deltaR_qj;
         double atomicRadii_j = _atomicRadii[atomJ];
         double atomicRadii_j2 = atomicRadii_j*atomicRadii_j;
-        double C_j = _P1*atomicRadii_j + _P2;
-        double F_VSA = C_j / (C_j + deltaR2 - atomicRadii_j2);
+        // the factor 10 and 100 are used to convert the unit from nm to Angstrom
+        double C_j = _P1*atomicRadii_j*10 + _P2;
+        double F_VSA = C_j / (C_j + deltaR2*100 - atomicRadii_j2*100);
         F_VSA = F_VSA*F_VSA;
         sum1 += F_VSA;
         sum2 += deltaR2*(F_VSA*F_VSA);
@@ -178,6 +189,32 @@ double GBMVIntegralTypeII::computeVolumeFromLookupTable(const std::vector<OpenMM
     return pre_sum;
 }
 
+double GBMVIntegralTypeII::computeVolume(const std::vector<OpenMM::Vec3>& atomCoordinates, const OpenMM::Vec3& r_q, double& sum1, double& sum2, double& sum3, OpenMM::Vec3& denom_vec){
+    double deltaR[ReferenceForce::LastDeltaRIndex];
+    sum1 = 0.0;
+    sum2 = 0.0;
+    for(int atomJ=0; atomJ<_numParticles; ++atomJ){
+        if (_periodic)
+            ReferenceForce::getDeltaRPeriodic(r_q, atomCoordinates[atomJ], _periodicBoxVectors, deltaR);
+        else
+            ReferenceForce::getDeltaR(r_q, atomCoordinates[atomJ], deltaR);
+        double deltaR_qj = deltaR[ReferenceForce::RIndex];
+        double deltaR2 = deltaR_qj*deltaR_qj;
+        double atomicRadii_j = _atomicRadii[atomJ];
+        double atomicRadii_j2 = atomicRadii_j*atomicRadii_j;
+        double C_j = _P1*atomicRadii_j*10 + _P2;
+        double F_VSA = C_j / (C_j + deltaR2*100 - atomicRadii_j2*100);
+        F_VSA = F_VSA*F_VSA;
+        sum1 += F_VSA;
+        sum2 += deltaR2*(F_VSA*F_VSA);
+        OpenMM::Vec3 dr(deltaR[ReferenceForce::XIndex],deltaR[ReferenceForce::YIndex],deltaR[ReferenceForce::ZIndex]);
+        denom_vec += dr*F_VSA;
+    }
+    sum3 = sqrt(denom_vec.dot(denom_vec));
+    double sum = _S0 * sum1 * sum2 / (sum3*sum3);
+    double pre_sum = exp(_beta*(sum - _lambda));
+    return pre_sum;
+}
 
 void GBMVIntegralTypeII::computeGradientPerQuadFromLookupTable(const int atomI, const int integralIdx, const std::vector<OpenMM::Vec3>& atomCoordinates, const OpenMM::Vec3& r_q, const double pre_sum, std::vector<double>& gradients, const double prefactor, const std::vector<int>& atomList, const int numListAtoms, const double sum1, const double sum2, const double sum3, const OpenMM::Vec3& denom_vec){
     if(numListAtoms==0) return;
@@ -196,8 +233,8 @@ void GBMVIntegralTypeII::computeGradientPerQuadFromLookupTable(const int atomI, 
         double atomicRadii_j = _atomicRadii[atomJ];
         double atomicRadii_j2 = atomicRadii_j*atomicRadii_j;
 
-        double C_j = _P1*atomicRadii_j + _P2;
-        double F_VSA = C_j / (C_j + deltaR2 - atomicRadii_j2);
+        double C_j = _P1*atomicRadii_j*10 + _P2;
+        double F_VSA = C_j / (C_j + deltaR2*100 - atomicRadii_j2*100);
         F_VSA = F_VSA*F_VSA;
 
         double tmp0 = (C_j + deltaR2 - atomicRadii_j2);
@@ -241,3 +278,62 @@ void GBMVIntegralTypeII::computeGradientPerQuadFromLookupTable(const int atomI, 
     return;
 }
 
+void GBMVIntegralTypeII::computeGradientPerQuad(const int atomI, const int integralIdx, const std::vector<OpenMM::Vec3>& atomCoordinates, const OpenMM::Vec3& r_q, const double pre_sum, std::vector<double>& gradients, const double prefactor, const double sum1, const double sum2, const double sum3, const OpenMM::Vec3& denom_vec){
+    double deltaR[ReferenceForce::LastDeltaRIndex];
+    double factor = -1.0/((1.0+pre_sum)*(1.0+pre_sum)) * (_beta*pre_sum) * prefactor * _S0;
+    OpenMM::Vec3 tmp_grad;
+    for(int atomJ=0; atomJ<_numParticles; ++atomJ){
+        if (_periodic)
+            ReferenceForce::getDeltaRPeriodic(r_q, atomCoordinates[atomJ], _periodicBoxVectors, deltaR);
+        else
+            ReferenceForce::getDeltaR(r_q, atomCoordinates[atomJ], deltaR);
+        OpenMM::Vec3 dr(deltaR[ReferenceForce::XIndex],deltaR[ReferenceForce::YIndex],deltaR[ReferenceForce::ZIndex]);
+        double deltaR_qj = deltaR[ReferenceForce::RIndex];
+        double deltaR2 = deltaR_qj*deltaR_qj;
+        double atomicRadii_j = _atomicRadii[atomJ];
+        double atomicRadii_j2 = atomicRadii_j*atomicRadii_j;
+
+        double C_j = _P1*atomicRadii_j*10 + _P2;
+        double F_VSA = C_j / (C_j + deltaR2*100 - atomicRadii_j2*100);
+        F_VSA = F_VSA*F_VSA;
+
+        double tmp0 = (C_j + deltaR2 - atomicRadii_j2);
+        double dF_VSA_dr_factor = -4.0*C_j*C_j/(tmp0*tmp0*tmp0);
+        double tmp1 = dF_VSA_dr_factor * sum2 / (sum3*sum3) * factor;
+
+        int grad_idx_i = integralIdx*_numParticles*_numParticles*3 +  atomI*_numParticles*3 + atomI*3;
+        int grad_idx_j = integralIdx*_numParticles*_numParticles*3 +  atomI*_numParticles*3 + atomJ*3;
+
+        tmp_grad = dr * tmp1;
+        for(int n = 0; n < 3; ++n){
+            gradients[grad_idx_i + n] -= tmp_grad[n];
+            gradients[grad_idx_j + n] += tmp_grad[n];
+        } 
+        
+        double tmp2 = 2.0*F_VSA*(F_VSA + dF_VSA_dr_factor*deltaR2) / (sum3*sum3) * sum1 * factor;
+        tmp_grad = dr * tmp2;
+        for(int n = 0; n < 3; ++n){
+            gradients[grad_idx_i + n] -= tmp_grad[n];
+            gradients[grad_idx_j + n] += tmp_grad[n];
+        } 
+
+        double tmp3 = -2.0 / (sum3*sum3*sum3*sum3) * sum1 * sum2 * factor ;
+        OpenMM::Vec3 denom_vec_dr1;
+        denom_vec_dr1[0] = tmp3 * (denom_vec[0] * F_VSA + 
+                (denom_vec[0]*dr[0] + denom_vec[1]*dr[1] + denom_vec[2]*dr[2])*dF_VSA_dr_factor*dr[0]);
+        
+        denom_vec_dr1[1] = tmp3 * (denom_vec[1] * F_VSA + 
+                (denom_vec[0]*dr[0] + denom_vec[1]*dr[1] + denom_vec[2]*dr[2])*dF_VSA_dr_factor*dr[1]);
+
+        denom_vec_dr1[2] = tmp3 * (denom_vec[2] * F_VSA + 
+                (denom_vec[0]*dr[0] + denom_vec[1]*dr[1] + denom_vec[2]*dr[2])*dF_VSA_dr_factor*dr[2]);
+
+        tmp_grad = denom_vec_dr1;
+        for(int n = 0; n < 3; ++n){
+            gradients[grad_idx_i + n] -= tmp_grad[n];
+            gradients[grad_idx_j + n] += tmp_grad[n];
+        } 
+
+    }
+    return;
+}

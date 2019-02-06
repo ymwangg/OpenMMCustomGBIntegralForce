@@ -21,7 +21,6 @@ class CustomGBIntegral{
         void setLookupTableGridLength(double length);
         void setLookupTableBufferLength(double length);
 
-    protected:
         std::vector<double> _atomicRadii;
     private:
         bool validateTransform(OpenMM::Vec3 newVec);

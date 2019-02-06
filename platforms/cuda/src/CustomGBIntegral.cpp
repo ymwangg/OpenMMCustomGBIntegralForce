@@ -18,10 +18,11 @@ using namespace::std;
 CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const CharmmGBMVForce& force, CudaParameterSet* &computedIntegrals, CudaParameterSet* &energyDerivs) : cu(cu), system(system),force(force),computedIntegrals(computedIntegrals),dEdI(energyDerivs){
     integralType = force.getGBIntegralType();
     map<string, string> constants;
+    float switchingDistance = 0.03;
     switch(integralType){
         case CharmmGBMVForce::GBIntegralType::GBSWIntegral :
             {
-                constants["SWITCH_DISTANCE"] = to_string(0.03);
+                constants["SWITCH_DISTANCE"] = to_string(switchingDistance);
                 break;
             }
         case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI : 
@@ -75,11 +76,30 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
     }
 
     {
+        switch(integralType){
+            case CharmmGBMVForce::GBIntegralType::GBSWIntegral :
+                {
+                    _lookupTableSize = 25;
+                    _lookupTableBufferLength = switchingDistance;
+                    break;
+                }
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI : 
+                {
+                    _lookupTableSize = 64;
+                    _lookupTableBufferLength  = 0.21;
+                    break;
+                }
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII :
+                {
+                    _lookupTableSize = 128;
+                    _lookupTableBufferLength  = 0.21+0.2;
+                    break;
+                }
+        }
         double4 periodicBoxLength = cu.getPeriodicBoxSize();
         double d_x = periodicBoxLength.x;
         double d_y = periodicBoxLength.y;
         double d_z = periodicBoxLength.z;
-        _lookupTableSize = 25;
         _lookupTableGridLength = 0.15;
         int n_x = ceil(d_x/_lookupTableGridLength)+1;
         int n_y = ceil(d_y/_lookupTableGridLength)+1;
@@ -103,23 +123,6 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
         d_lookupTableGridStep.initialize<float>(cu,3,"CustomGBLookupTableGridStep");
         d_lookupTableNumGridPoints.upload(_lookupTableNumberOfGridPoints);
         d_lookupTableGridStep.upload(step);
-        switch(integralType){
-            case CharmmGBMVForce::GBIntegralType::GBSWIntegral :
-                {
-                    _lookupTableBufferLength = 0.03;
-                    break;
-                }
-            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI : 
-                {
-                    _lookupTableBufferLength  = 0.20;
-                    break;
-                }
-            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII :
-                {
-                    _lookupTableBufferLength  = 0.20;
-                    break;
-                }
-        }
         map<string, string> defines;
         defines["NUM_ATOMS"] = cu.intToString(cu.getNumAtoms());
         CUmodule module = cu.createModule(cu.replaceStrings(CudaCharmmKernelSources::lookupTable,defines));
@@ -127,12 +130,32 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
         lookupTableKernel = cu.getKernel(module, "computeLookupTable");
     }
     { // quadrature
-
-        //radial integral starting point
-        _r0 = 0.5*OpenMM::NmPerAngstrom;
-
-        //radial integral ending point
-        _r1 = 20.0*OpenMM::NmPerAngstrom;
+        switch(integralType){
+            case CharmmGBMVForce::GBIntegralType::GBSWIntegral :
+                {
+                    //radial integral starting point
+                    _r0 = 0.5*OpenMM::NmPerAngstrom;
+                    //radial integral ending point
+                    _r1 = 20.0*OpenMM::NmPerAngstrom;
+                    break;
+                }
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI : 
+                {
+                    //radial integral starting point
+                    _r0 = 0.5*OpenMM::NmPerAngstrom;
+                    //radial integral ending point
+                    _r1 = 20.0*OpenMM::NmPerAngstrom;
+                    break;
+                }
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII :
+                {
+                    //radial integral starting point
+                    _r0 = 0.5*OpenMM::NmPerAngstrom;
+                    //radial integral ending point
+                    _r1 = 20.0*OpenMM::NmPerAngstrom;
+                    break;
+                }
+        }
 
         //number of radial integration points using Gauss-Legendre quadrature
         int nRadialPoints = 24; 
@@ -246,8 +269,9 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
                     beforeVolume << "float sum3 = 0;\n";
                     beforeVolume << "float3 vector_sum = make_float3(0,0,0);\n";
                     afterVolume << "sum3 = sqrtf(vector_sum.x*vector_sum.x + vector_sum.y*vector_sum.y + vector_sum.z*vector_sum.z);\n";
+                    afterVolume << "if(sum3<1e-18) sum3=1e-18;\n";
                     afterVolume << "sum = S0*sum1*sum2 / (sum3*sum3);\n";
-                    afterVolume << "float tmp_presum = sum3==0 ? 0 : expf(BETA*(sum - LAMBDA));\n";
+                    afterVolume << "float tmp_presum = expf(BETA*(sum - LAMBDA));\n";
                     afterVolume << "float V = 1.0 - 1.0/(1.0 + tmp_presum);\n";
                     afterVolume << "presum1[atomI*NUM_QUADRATURE_POINTS + quadIdx] = sum1;\n";
                     afterVolume << "presum2[atomI*NUM_QUADRATURE_POINTS + quadIdx] = sum2;\n";
@@ -297,9 +321,19 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
         macroDefines["USE_PERIODIC"] = "1";
         macroDefines["USE_LOOKUP_TABLE"] = "1";
 
-        cout<<cu.replaceStrings(CudaCharmmKernelSources::computeIntegral, defines)<<endl;
+        cout<<cu.replaceStrings(cu.replaceStrings(CudaCharmmKernelSources::computeIntegral,defines),constants)<<endl;
         CUmodule module = cu.createModule(cu.replaceStrings(cu.replaceStrings(CudaCharmmKernelSources::computeIntegral,defines),constants),macroDefines);
-        //CUmodule module = cu.createModule(cu.replaceStrings(CudaCharmmKernelSources::computeIntegral2,defines),macroDefines);
+        /*
+        CUmodule module;
+        switch(integralType){
+            case CharmmGBMVForce::GBIntegralType::GBSWIntegral :
+                module = cu.createModule(CudaCharmmKernelSources::computeIntegral2,macroDefines); break;
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI : 
+                module = cu.createModule(CudaCharmmKernelSources::computeIntegral3,macroDefines); break;
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII : 
+                module = cu.createModule(CudaCharmmKernelSources::computeIntegral4,macroDefines); break;
+        }
+        */
         integralKernel = cu.getKernel(module, "computeGBSWIntegral");
     }
 
@@ -428,10 +462,21 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
         macroDefines["USE_PERIODIC"] = "1";
         macroDefines["USE_LOOKUP_TABLE"] = "1";
 
-        //cout<<CudaCharmmKernelSources::reduceGBSWForce<<endl;
-        cout<<cu.replaceStrings(CudaCharmmKernelSources::reduceIntegralForce,defines)<<endl;
+        cout<<cu.replaceStrings(cu.replaceStrings(CudaCharmmKernelSources::reduceIntegralForce,defines),constants)<<endl;
         //CUmodule module = cu.createModule(cu.replaceStrings(CudaCharmmKernelSources::reduceGBSWForce,defines),macroDefines);
         CUmodule module = cu.createModule(cu.replaceStrings(cu.replaceStrings(CudaCharmmKernelSources::reduceIntegralForce,defines),constants),macroDefines);
+
+        /*
+        CUmodule module;
+        switch(integralType){
+            case CharmmGBMVForce::GBIntegralType::GBSWIntegral :
+                module = cu.createModule(CudaCharmmKernelSources::reduceIntegralForce2,macroDefines); break;
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI : 
+                module = cu.createModule(CudaCharmmKernelSources::reduceIntegralForce3,macroDefines); break;
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII : 
+                module = cu.createModule(CudaCharmmKernelSources::reduceIntegralForce4,macroDefines); break;
+        }
+        */
         reduceForceKernel = cu.getKernel(module, "reduceGBSWForce");
     }
 
@@ -596,6 +641,14 @@ void CustomGBIntegral::evaluate(){
     */
     int threads = min(1024,int(ceil(float(_numQuadPoints)/32)*32));
     cuLaunchKernel(integralKernel, cu.getNumAtoms(), 1, 1, threads, 1, 1, 0, 0, &integralArgs[0], NULL);
+    vector<vector<float> > tmp;
+    computedIntegrals->getParameterValues(tmp);
+    for(auto &c : tmp){
+        for(auto &i : c){
+            printf("%f ",i);
+        }
+        printf("\n");
+    }
     //cu.executeKernel(integralKernel, &integralArgs[0],cu.getPaddedNumAtoms());
 }
 

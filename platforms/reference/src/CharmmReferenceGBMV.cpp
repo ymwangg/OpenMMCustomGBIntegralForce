@@ -160,7 +160,8 @@ void CharmmReferenceGBMV::calculateIxn(vector<Vec3>& atomCoordinates, double** a
         integralMethod->evaluate(inContext, atomCoordinates, integrals, volumeIntegralGradients, true);
     }
     for(int i=0; i<numberOfAtoms; i++){
-        printf("%f %f %f -> ",atomCoordinates[i][0],atomCoordinates[i][1],atomCoordinates[i][2]);
+        //printf("%f %f %f -> ",atomCoordinates[i][0],atomCoordinates[i][1],atomCoordinates[i][2]);
+        //printf("%f ",integralMethod->_atomicRadii[i]);
         for(int j=0; j<numberOfIntegrals; j++){
             printf("%f ",integrals[j*numberOfAtoms+i]);
         }

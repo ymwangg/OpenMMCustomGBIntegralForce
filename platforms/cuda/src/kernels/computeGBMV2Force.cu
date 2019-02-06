@@ -12,8 +12,8 @@ float deltaR2 = deltaR_qj*deltaR_qj;
 float atomicRadii_j = radius[atomJ];
 float atomicRadii_j2 = atomicRadii_j*atomicRadii_j;
 
-float C_j = P1 * atomicRadii_j + P2;
-float F_VSA = C_j / (C_j + deltaR2 - atomicRadii_j2);
+float C_j = P1 * atomicRadii_j * 10.0 + P2;
+float F_VSA = C_j / (C_j + deltaR2*100.0 - atomicRadii_j2*100.0);
 F_VSA = F_VSA*F_VSA;
 
 float tmp0 = (C_j + deltaR2 - atomicRadii_j2);
