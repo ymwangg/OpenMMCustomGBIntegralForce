@@ -58,6 +58,7 @@ GBMVIntegralTypeII::GBMVIntegralTypeII(){
     //lookup table parameters
     setLookupTableGridLength(0.15); //0.15nm
     setLookupTableBufferLength(0.21); //0.20nm
+    setLookupTableSize(64);
 }
 
 void GBMVIntegralTypeII::initialize(const OpenMM::System& system, const OpenMM::CharmmGBMVForce& force){
@@ -174,7 +175,7 @@ double GBMVIntegralTypeII::computeVolumeFromLookupTable(const std::vector<OpenMM
         double deltaR2 = deltaR_qj*deltaR_qj;
         double atomicRadii_j = _atomicRadii[atomJ];
         double atomicRadii_j2 = atomicRadii_j*atomicRadii_j;
-        // the factor 10 and 100 are used to convert the unit from nm to Angstrom
+        // the factors 10 and 100 are used to convert the unit from nm to Angstrom
         double C_j = _P1*atomicRadii_j*10 + _P2;
         double F_VSA = C_j / (C_j + deltaR2*100 - atomicRadii_j2*100);
         F_VSA = F_VSA*F_VSA;
@@ -202,6 +203,7 @@ double GBMVIntegralTypeII::computeVolume(const std::vector<OpenMM::Vec3>& atomCo
         double deltaR2 = deltaR_qj*deltaR_qj;
         double atomicRadii_j = _atomicRadii[atomJ];
         double atomicRadii_j2 = atomicRadii_j*atomicRadii_j;
+        // the factors 10 and 100 are used to convert the unit from nm to Angstrom
         double C_j = _P1*atomicRadii_j*10 + _P2;
         double F_VSA = C_j / (C_j + deltaR2*100 - atomicRadii_j2*100);
         F_VSA = F_VSA*F_VSA;
@@ -233,12 +235,13 @@ void GBMVIntegralTypeII::computeGradientPerQuadFromLookupTable(const int atomI, 
         double atomicRadii_j = _atomicRadii[atomJ];
         double atomicRadii_j2 = atomicRadii_j*atomicRadii_j;
 
+        // the factors 10, 100 and 400 are used to convert the unit from nm to Angstrom
         double C_j = _P1*atomicRadii_j*10 + _P2;
         double F_VSA = C_j / (C_j + deltaR2*100 - atomicRadii_j2*100);
         F_VSA = F_VSA*F_VSA;
 
-        double tmp0 = (C_j + deltaR2 - atomicRadii_j2);
-        double dF_VSA_dr_factor = -4.0*C_j*C_j/(tmp0*tmp0*tmp0);
+        double tmp0 = (C_j + deltaR2*100 - atomicRadii_j2*100);
+        double dF_VSA_dr_factor = -400.0*C_j*C_j/(tmp0*tmp0*tmp0);
         double tmp1 = dF_VSA_dr_factor * sum2 / (sum3*sum3) * factor;
 
         int grad_idx_i = integralIdx*_numParticles*_numParticles*3 +  atomI*_numParticles*3 + atomI*3;
@@ -293,12 +296,13 @@ void GBMVIntegralTypeII::computeGradientPerQuad(const int atomI, const int integ
         double atomicRadii_j = _atomicRadii[atomJ];
         double atomicRadii_j2 = atomicRadii_j*atomicRadii_j;
 
+        // the factors 10, 100 and 400 are used to convert the unit from nm to Angstrom
         double C_j = _P1*atomicRadii_j*10 + _P2;
         double F_VSA = C_j / (C_j + deltaR2*100 - atomicRadii_j2*100);
         F_VSA = F_VSA*F_VSA;
 
         double tmp0 = (C_j + deltaR2 - atomicRadii_j2);
-        double dF_VSA_dr_factor = -4.0*C_j*C_j/(tmp0*tmp0*tmp0);
+        double dF_VSA_dr_factor = -400.0*C_j*C_j/(tmp0*tmp0*tmp0);
         double tmp1 = dF_VSA_dr_factor * sum2 / (sum3*sum3) * factor;
 
         int grad_idx_i = integralIdx*_numParticles*_numParticles*3 +  atomI*_numParticles*3 + atomI*3;

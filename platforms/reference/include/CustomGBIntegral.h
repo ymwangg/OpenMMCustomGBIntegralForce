@@ -20,6 +20,7 @@ class CustomGBIntegral{
         void setPeriodic(OpenMM::Vec3* vectors);
         void setLookupTableGridLength(double length);
         void setLookupTableBufferLength(double length);
+        void setLookupTableSize(int size);
 
         std::vector<double> _atomicRadii;
     private:

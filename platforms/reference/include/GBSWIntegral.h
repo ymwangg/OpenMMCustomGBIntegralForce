@@ -30,6 +30,7 @@ class GBSWIntegral : public CustomGBIntegral{
         double _r1;
         double _sw;
         bool _periodic;
+        bool _useLookupTable;
         OpenMM::Vec3 _periodicBoxVectors[3];
 };
 }

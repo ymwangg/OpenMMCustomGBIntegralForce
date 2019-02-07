@@ -3,7 +3,6 @@
 #define BEGIN auto start = std::chrono::system_clock::now();
 #define END auto end = std::chrono::system_clock::now();std::chrono::duration<double> elapsed_seconds = end-start;cout<<"calculateIxn elapsed time: " << elapsed_seconds.count()<<endl;
 
-#define USE_LOOKUP_TABLE true
 
 #include "openmm/internal/CharmmQuadrature.h"
 #include "ReferenceForce.h"
@@ -23,6 +22,7 @@ static Vec3* extractBoxVectors(ContextImpl& context) {
 }
 
 GBSWIntegral::GBSWIntegral(){
+    _useLookupTable = true;
     _periodic = false;
     //half of switching distance
     _sw = 0.3*OpenMM::NmPerAngstrom;
@@ -107,9 +107,9 @@ void GBSWIntegral::setBoxVectors(OpenMM::Vec3* vectors){
 
 void GBSWIntegral::BeforeComputation(ContextImpl& context, const std::vector<OpenMM::Vec3>& atomCoordinates){
     if(_periodic) setBoxVectors(extractBoxVectors(context));
-#if USE_LOOKUP_TABLE
-    computeLookupTable(atomCoordinates);
-#endif
+    if(_useLookupTable){
+        computeLookupTable(atomCoordinates);
+    }
 }
 
 void GBSWIntegral::FinishComputation(ContextImpl& context, const std::vector<OpenMM::Vec3>& atomCoordinates){
@@ -131,27 +131,24 @@ void GBSWIntegral::evaluate(ContextImpl& context, const std::vector<OpenMM::Vec3
         for(int atomI=0; atomI<_numParticles; ++atomI){
             for(int i=0; i<3; ++i) 
                 r_q[i] = atomCoordinates[atomI][i] + _quad[q][i];
-#if USE_LOOKUP_TABLE
             int numListAtoms;
-            getLookupTableAtomList(r_q, atomList, numListAtoms);
-            if(numListAtoms==0) continue;
-            //printf("getting%p\n",&atomList);
-            V_q = computeVolumeFromLookupTable(atomCoordinates, r_q, *atomList, numListAtoms);
-#else
-            V_q = computeVolume(atomCoordinates, r_q);
-#endif
+            if(_useLookupTable){
+                getLookupTableAtomList(r_q, atomList, numListAtoms);
+                if(numListAtoms==0) continue;
+                V_q = computeVolumeFromLookupTable(atomCoordinates, r_q, *atomList, numListAtoms);
+            }else{
+                V_q = computeVolume(atomCoordinates, r_q);
+            }
             for(int i=0; i<_numIntegrals; ++i){
                 int integral_globalIdx = i*_numParticles + atomI;
                 prefactors[i] = w_q/pow(radius_q, _orders[i]);
                 integrals[integral_globalIdx] += prefactors[i]*(1.0 - V_q);
             }
-            if(includeGradient){
-                for(int i=0; i<_orders.size(); ++i){
-#if USE_LOOKUP_TABLE
+            for(int i=0; i<_orders.size(); ++i){
+                if(_useLookupTable){
                     computeGradientPerQuadFromLookupTable(atomI, i, atomCoordinates, r_q, V_q, gradients, prefactors[i], *atomList, numListAtoms);
-#else
+                }else{
                     computeGradientPerQuad(atomI, i, atomCoordinates, r_q, V_q, gradients, prefactors[i]);
-#endif
                 }
             }
         }

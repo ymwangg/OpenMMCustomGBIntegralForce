@@ -16,8 +16,8 @@ float C_j = P1 * atomicRadii_j * 10.0 + P2;
 float F_VSA = C_j / (C_j + deltaR2*100.0 - atomicRadii_j2*100.0);
 F_VSA = F_VSA*F_VSA;
 
-float tmp0 = (C_j + deltaR2 - atomicRadii_j2);
-float dF_VSA_dr_factor = -4.0*C_j*C_j/(tmp0*tmp0*tmp0);
+float tmp0 = (C_j + deltaR2*100.0 - atomicRadii_j2*100.0);
+float dF_VSA_dr_factor = -400.0*C_j*C_j/(tmp0*tmp0*tmp0);
 float tmp1 = 1.0 * dF_VSA_dr_factor * sum2 / (sum3*sum3) * factor;
 
 dIdr_vec.x -= tmp1 * delta.x;

@@ -91,8 +91,8 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
                 }
             case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII :
                 {
-                    _lookupTableSize = 128;
-                    _lookupTableBufferLength  = 0.21+0.2;
+                    _lookupTableSize = 64;
+                    _lookupTableBufferLength  = 0.21;
                     break;
                 }
         }
@@ -385,8 +385,11 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
             case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII : 
                 {
                     beforeVolume << "float sum1 = presum1[atomI*NUM_QUADRATURE_POINTS + quadIdx];\n";
+                    beforeVolume << "if(sum1==0) continue;\n";
                     beforeVolume << "float sum2 = presum2[atomI*NUM_QUADRATURE_POINTS + quadIdx];\n";
+                    beforeVolume << "if(sum2==0) continue;\n";
                     beforeVolume << "float sum3 = presum3[atomI*NUM_QUADRATURE_POINTS + quadIdx];\n";
+                    beforeVolume << "if(sum3==1e-18) continue;\n";
                     beforeVolume << "float3 vector_sum = prevector[atomI*NUM_QUADRATURE_POINTS + quadIdx];\n";
                     beforeVolume << "float sum = S0 * sum1 * sum2 / (sum3*sum3);\n";
                     beforeVolume << "float tmp_presum = expf(BETA*(sum - LAMBDA));\n";
@@ -641,6 +644,7 @@ void CustomGBIntegral::evaluate(){
     */
     int threads = min(1024,int(ceil(float(_numQuadPoints)/32)*32));
     cuLaunchKernel(integralKernel, cu.getNumAtoms(), 1, 1, threads, 1, 1, 0, 0, &integralArgs[0], NULL);
+    /*
     vector<vector<float> > tmp;
     computedIntegrals->getParameterValues(tmp);
     for(auto &c : tmp){
@@ -649,6 +653,7 @@ void CustomGBIntegral::evaluate(){
         }
         printf("\n");
     }
+    */
     //cu.executeKernel(integralKernel, &integralArgs[0],cu.getPaddedNumAtoms());
 }
 

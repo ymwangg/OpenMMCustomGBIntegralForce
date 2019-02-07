@@ -33,6 +33,10 @@ void CustomGBIntegral::setLookupTableBufferLength(double length){
     _lookupTableBufferLength = length;
 }
 
+void CustomGBIntegral::setLookupTableSize(int size){
+    _lookupTableSize = size;
+}
+
 void CustomGBIntegral::computeLookupTable(const std::vector<OpenMM::Vec3>& atomCoordinates){
     //_lookupTable;
     //_r1;
