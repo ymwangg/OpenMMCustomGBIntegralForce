@@ -16,6 +16,7 @@ using namespace::std;
 #define REAL4 float4
 
 CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const CharmmGBMVForce& force, CudaParameterSet* &computedIntegrals, CudaParameterSet* &energyDerivs) : cu(cu), system(system),force(force),computedIntegrals(computedIntegrals),dEdI(energyDerivs){
+    _useLookupTable = true;
     integralType = force.getGBIntegralType();
     map<string, string> constants;
     float switchingDistance = 0.03;
@@ -92,7 +93,7 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
             case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII :
                 {
                     _lookupTableSize = 64;
-                    _lookupTableBufferLength  = 0.21;
+                    _lookupTableBufferLength  = 0.21 ;
                     break;
                 }
         }
@@ -127,6 +128,7 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
         defines["NUM_ATOMS"] = cu.intToString(cu.getNumAtoms());
         CUmodule module = cu.createModule(cu.replaceStrings(CudaCharmmKernelSources::lookupTable,defines));
         //cout<<cu.replaceStrings(CudaCharmmKernelSources::lookupTable,defines)<<endl;
+        printf("compiling lookupTable kernel\n");
         lookupTableKernel = cu.getKernel(module, "computeLookupTable");
     }
     { // quadrature
@@ -220,7 +222,7 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
         _numIntegrals = force.getNumGBIntegrals();
         for(int i=0; i< _numIntegrals; i++){
             paramArgs << ",const float* __restrict__ quad_w" << cu.intToString(i);
-            paramArgs << ",float* integral" << cu.intToString(i);
+            paramArgs << ",float* __restrict__ integral" << cu.intToString(i);
         }
         switch(integralType){
             case CharmmGBMVForce::GBIntegralType::GBSWIntegral : 
@@ -319,7 +321,8 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
         defines["AFTER_VOLUME"] = afterVolume.str();
         defines["REDUCTION"] = reduction.str();
         macroDefines["USE_PERIODIC"] = "1";
-        macroDefines["USE_LOOKUP_TABLE"] = "1";
+        if(_useLookupTable)
+            macroDefines["USE_LOOKUP_TABLE"] = "1";
 
         cout<<cu.replaceStrings(cu.replaceStrings(CudaCharmmKernelSources::computeIntegral,defines),constants)<<endl;
         CUmodule module = cu.createModule(cu.replaceStrings(cu.replaceStrings(CudaCharmmKernelSources::computeIntegral,defines),constants),macroDefines);
@@ -334,6 +337,7 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
                 module = cu.createModule(CudaCharmmKernelSources::computeIntegral4,macroDefines); break;
         }
         */
+        printf("compiling integral kernel\n");
         integralKernel = cu.getKernel(module, "computeGBSWIntegral");
     }
 
@@ -463,7 +467,8 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
         defines["COMPUTE_FORCE"] = computeForce.str();
         defines["APPLY_CHAIN_RULE"] = applyChainRule.str();
         macroDefines["USE_PERIODIC"] = "1";
-        macroDefines["USE_LOOKUP_TABLE"] = "1";
+        if(_useLookupTable)
+            macroDefines["USE_LOOKUP_TABLE"] = "1";
 
         cout<<cu.replaceStrings(cu.replaceStrings(CudaCharmmKernelSources::reduceIntegralForce,defines),constants)<<endl;
         //CUmodule module = cu.createModule(cu.replaceStrings(CudaCharmmKernelSources::reduceGBSWForce,defines),macroDefines);
@@ -480,6 +485,7 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
                 module = cu.createModule(CudaCharmmKernelSources::reduceIntegralForce4,macroDefines); break;
         }
         */
+        printf("compiling reduction kernel\n");
         reduceForceKernel = cu.getKernel(module, "reduceGBSWForce");
     }
 
@@ -534,8 +540,7 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
         reduceForceArgs.push_back(cu.getInvPeriodicBoxSizePointer());
         reduceForceArgs.push_back(&radius->getBuffers()[0].getMemory());
         reduceForceArgs.push_back(&d_lookupTable.getDevicePointer());
-        reduceForceArgs.push_back(&d_lookupTableNumAtoms.getDevicePointer());
-        reduceForceArgs.push_back(&d_lookupTableNumGridPoints.getDevicePointer());
+        reduceForceArgs.push_back(&d_lookupTableNumAtoms.getDevicePointer()); reduceForceArgs.push_back(&d_lookupTableNumGridPoints.getDevicePointer());
         reduceForceArgs.push_back(&d_lookupTableMinCoord.getDevicePointer());
         reduceForceArgs.push_back(&d_lookupTableGridStep.getDevicePointer());
         reduceForceArgs.push_back(&d_quad.getDevicePointer());
@@ -606,10 +611,6 @@ void CustomGBIntegral::computeLookupTable(){
     _lookupTableMinCoordinate[1] = center_of_geom[1] - d_y/2.0;
     _lookupTableMinCoordinate[2] = center_of_geom[2] - d_z/2.0;
 
-    /*
-    printf("%f,%f,%f\n",_lookupTableMinCoordinate[0],
-            _lookupTableMinCoordinate[1],_lookupTableMinCoordinate[2]);
-            */
 
     d_lookupTableMinCoord.upload(_lookupTableMinCoordinate);
     //initialize vdw radii
@@ -625,8 +626,11 @@ void CustomGBIntegral::computeLookupTable(){
 }
 
 void CustomGBIntegral::evaluate(){
-    CUresult result = cuMemsetD32(computedIntegrals->getBuffers()[0].getMemory(),0,cu.getNumAtoms());
-    result = cuMemsetD32(computedIntegrals->getBuffers()[1].getMemory(),0,cu.getNumAtoms());
+    if(_useLookupTable) computeLookupTable();
+    CUresult result;
+    for(int i=0; i<_numIntegrals; i++){
+        cuMemsetD32(computedIntegrals->getBuffers()[i].getMemory(),0,cu.getPaddedNumAtoms());
+    }
     //printf("evaluating\n");
     /*
     CUresult result = cuMemsetD32(d_integrals.getDevicePointer(),0,d_integrals.getSize());
@@ -647,12 +651,17 @@ void CustomGBIntegral::evaluate(){
     /*
     vector<vector<float> > tmp;
     computedIntegrals->getParameterValues(tmp);
+    float min1=1e9,min2=1e9;
+    float max1=0,max2=0;
     for(auto &c : tmp){
-        for(auto &i : c){
-            printf("%f ",i);
-        }
-        printf("\n");
+        if(c[0] < min1 && c[0]!=0) min1=c[0];
+        if(c[0] > max1 && c[0]!=0) max1=c[0];
+        if(c[1] < min2 && c[1]!=0) min2=c[1];
+        if(c[1] > max2 && c[1]!=0) max2=c[1];
+        //printf("\n");
     }
+
+    printf("%f->%f %f->%f\n",min1,max1,min2,max2);
     */
     //cu.executeKernel(integralKernel, &integralArgs[0],cu.getPaddedNumAtoms());
 }

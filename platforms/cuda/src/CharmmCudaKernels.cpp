@@ -148,6 +148,8 @@ void CudaCalcCharmmGBMVForceKernel::initialize(const System& system, const Charm
         for (int i = 0; i < force.getNumComputedValues(); i++) {
             force.getComputedValueParameters(i, computedValueNames[i], computedValueExpressions[i], type);
         }
+    }
+    if (force.getNumGBIntegrals() > 0) {
         for (int i = 0; i < force.getNumGBIntegrals(); i++){
             force.getGBIntegralParameters(i, computedIntegralNames[i]);
         }
@@ -497,7 +499,8 @@ void CudaCalcCharmmGBMVForceKernel::initialize(const System& system, const Charm
         for (int i = 0; i < (int) computedIntegrals->getBuffers().size(); i++) {
             CudaNonbondedUtilities::ParameterInfo& buffer = computedIntegrals->getBuffers()[i];
             string integralName = "integrals"+cu.intToString(i+1);
-            if (n2EnergyStr.find(integralName+"1") != n2EnergyStr.npos || n2EnergyStr.find(integralName+"2") != n2EnergyStr.npos) {
+            if (n2EnergyStr.find(integralName+"1") != n2EnergyStr.npos 
+                    || n2EnergyStr.find(integralName+"2") != n2EnergyStr.npos) {
                 extraArgs << ", const " << buffer.getType() << "* __restrict__ global_" << integralName;
                 atomParams << buffer.getType() << " " << integralName << ";\n";
                 loadLocal1 << "localData[localAtomIndex]." << integralName << " = " << integralName << "1;\n";
@@ -830,6 +833,7 @@ void CudaCalcCharmmGBMVForceKernel::initialize(const System& system, const Charm
         cu.getNonbondedUtilities().addInteraction(useCutoff, usePeriodic, force.getNumExclusions() > 0, cutoff, exclusionList, source, force.getForceGroup());
     }
     {
+        // create the instance of integralMethod
         integralMethod = new CustomGBIntegral(cu,system,force,computedIntegrals,energyDerivs);
     }
     info = new ForceInfo(force);
@@ -839,19 +843,10 @@ void CudaCalcCharmmGBMVForceKernel::initialize(const System& system, const Charm
 }
 
 double CudaCalcCharmmGBMVForceKernel::execute(ContextImpl& context, bool includeForces, bool includeEnergy) {
-    /*
-    BEGIN
-        for(int i=0; i<1000; i++){
-            integralMethod->computeLookupTable();
-            integralMethod->evaluate();
-        }
-    END
-    */
     if(numComputedIntegrals > 0){
-        integralMethod->computeLookupTable();
+        //integralMethod->computeLookupTable();
         integralMethod->evaluate();
     }
-
     CudaNonbondedUtilities& nb = cu.getNonbondedUtilities();
     if (!hasInitializedKernels) {
         hasInitializedKernels = true;

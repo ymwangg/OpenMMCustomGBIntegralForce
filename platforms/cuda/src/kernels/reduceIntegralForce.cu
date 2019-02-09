@@ -13,7 +13,7 @@ PARAM_ARGS)
 
     //each blockIdx.x maps to an atom
     for(int atomI = blockIdx.x; atomI < NUM_ATOMS; atomI += gridDim.x){
-        float3 forceI = make_float3(0,0,0);
+        float3 forceI = make_float3(0.0,0.0,0.0);
         float4 posI = posq[atomI];
         int quadIdx = blockIdx.y*blockDim.x + threadIdx.x;
         LOAD_VOLUME
@@ -45,7 +45,7 @@ PARAM_ARGS)
 #else
         for(int atomJ = 0; atomJ < NUM_ATOMS; atomJ++){
 #endif
-            float3 forceJ = make_float3(0,0,0);
+            float3 forceJ = make_float3(0.0,0.0,0.0);
             float4 posJ = posq[atomJ];
             float3 delta = make_float3(posJ.x - quadPosR.x, 
                     posJ.y - quadPosR.y, posJ.z - quadPosR.z);
@@ -55,13 +55,27 @@ PARAM_ARGS)
             COMPUTE_FORCE
             APPLY_CHAIN_RULE
 
-            atomicAdd(&forceBuffers[atomJ], (long long) (forceJ.x*0x100000000));
-            atomicAdd(&forceBuffers[atomJ+NUM_PADDED_ATOMS], (long long) (forceJ.y*0x100000000));
-            atomicAdd(&forceBuffers[atomJ+NUM_PADDED_ATOMS*2], (long long) (forceJ.z*0x100000000));
+
+            if(abs(forceJ.x)>1e-10) atomicAdd(&forceBuffers[atomJ], static_cast<unsigned long long>((long long) (forceJ.x*0x100000000)));
+            if(abs(forceJ.y)>1e-10) atomicAdd(&forceBuffers[atomJ+NUM_PADDED_ATOMS], static_cast<unsigned long long>((long long) (forceJ.y*0x100000000)));
+            if(abs(forceJ.z)>1e-10) atomicAdd(&forceBuffers[atomJ+NUM_PADDED_ATOMS*2], static_cast<unsigned long long>((long long) (forceJ.z*0x100000000)));
         } // end atomJ
-        atomicAdd(&forceBuffers[atomI], (long long) (forceI.x*0x100000000));
-        atomicAdd(&forceBuffers[atomI+NUM_PADDED_ATOMS], (long long) (forceI.y*0x100000000));
-        atomicAdd(&forceBuffers[atomI+NUM_PADDED_ATOMS*2], (long long) (forceI.z*0x100000000));
+        /*
+        float3 origin = make_float3(1/((real) 0x100000000) * (long long) forceBuffers[atomI] ,
+                1/((real) 0x100000000) * (long long)forceBuffers[atomI+NUM_PADDED_ATOMS],
+                1/((real) 0x100000000) * (long long)forceBuffers[atomI+NUM_PADDED_ATOMS*2]);
+                */
+        if(abs(forceI.x)>1e-10) atomicAdd(&forceBuffers[atomI], static_cast<unsigned long long>((long long) (forceI.x*0x100000000)));
+        if(abs(forceI.y)>1e-10) atomicAdd(&forceBuffers[atomI+NUM_PADDED_ATOMS], static_cast<unsigned long long>((long long) (forceI.y*0x100000000)));
+        if(abs(forceI.z)>1e-10) atomicAdd(&forceBuffers[atomI+NUM_PADDED_ATOMS*2], static_cast<unsigned long long>((long long) (forceI.z*0x100000000)));
+        /*
+        float3 end = make_float3(1/((real) 0x100000000) * (long long) forceBuffers[atomI] ,
+                1/((real) 0x100000000) * (long long)forceBuffers[atomI+NUM_PADDED_ATOMS],
+                1/((real) 0x100000000) * (long long)forceBuffers[atomI+NUM_PADDED_ATOMS*2]);
+        if(end.x*end.x+end.y*end.y+end.z*end.z > 1e9){
+            printf("%e,%e,%e + %e,%e,%e -> %e,%e,%e\n",forceI.x,forceI.y,forceI.z,origin.x,origin.y,origin.z,end.x,end.y,end.z);
+        }
+            */
         } // end quadrature point
     } // end atomI
 }

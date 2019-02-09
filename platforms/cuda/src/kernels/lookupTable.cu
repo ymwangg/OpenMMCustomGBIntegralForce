@@ -2,7 +2,7 @@
 /**
  * Compute a force based on pair interactions.
  */
-extern "C" __global__ void computeLookupTable(const real4* __restrict__ posq, const real4 periodicBoxSize, const real4 invPeriodicBoxSize, const float* __restrict__ radius, int* lookupTable, int* lookupTableNumAtoms, const int* __restrict__ lookupTableNumGridPoints, const float* __restrict__ lookupTableMinCoor, const float* __restrict__ lookupTableGridStep, const float lookupTableGridLength, const float lookupTableBufferLength, const int lookupTableSize)
+extern "C" __global__ void computeLookupTable(const real4* __restrict__ posq, const real4 periodicBoxSize, const real4 invPeriodicBoxSize, const float* __restrict__ radius, int* __restrict__ lookupTable, int* __restrict__ lookupTableNumAtoms, const int* __restrict__ lookupTableNumGridPoints, const float* __restrict__ lookupTableMinCoor, const float* __restrict__ lookupTableGridStep, const float lookupTableGridLength, const float lookupTableBufferLength, const int lookupTableSize)
 {   
     int n_x = lookupTableNumGridPoints[0];
     int n_y = lookupTableNumGridPoints[1];
@@ -39,11 +39,11 @@ extern "C" __global__ void computeLookupTable(const real4* __restrict__ posq, co
 
                     //apply periodic boundary condition
                     float x0 = x - periodicBoxSize.x * 
-                        floorf((pos.x - minCoor.x)/periodicBoxSize.x);
+                        floorf((x - minCoor.x)/periodicBoxSize.x);
                     float y0 = y - periodicBoxSize.y * 
-                        floorf((pos.y - minCoor.y)/periodicBoxSize.y);
+                        floorf((y - minCoor.y)/periodicBoxSize.y);
                     float z0 = z - periodicBoxSize.z * 
-                        floorf((pos.z - minCoor.z)/periodicBoxSize.z);
+                        floorf((z - minCoor.z)/periodicBoxSize.z);
 
                     //calculate lookupTable grid index
                     int idx_x = floorf((x0 - minCoor.x) / gridStep.x);
@@ -55,7 +55,13 @@ extern "C" __global__ void computeLookupTable(const real4* __restrict__ posq, co
                         int lookupTableIdx = idx_x*n_y*n_z + idx_y*n_z + idx_z;
                         int insertionIdx = atomicAdd(&lookupTableNumAtoms[lookupTableIdx],1);
                         if(insertionIdx < lookupTableSize){
-                            lookupTable[lookupTableIdx*lookupTableSize + insertionIdx] = index;
+                            int location = lookupTableIdx*lookupTableSize + insertionIdx;
+                            if(location < 0) {
+                                printf("abnormal %d<-(%d,%d,%d)\n",location,lookupTableIdx,lookupTableSize,insertionIdx);
+                                printf("(%f,%f,%f)->(%f,%f,%f)->min(%f,%f,%f)(%d,%d,%d)\n",x,y,z,x0,y0,z0,minCoor.x,minCoor.y,minCoor.z,
+                                        idx_x,idx_y,idx_z);
+                            }
+                            lookupTable[location] = index;
                         }else{
                             insertionIdx = atomicAdd(&lookupTableNumAtoms[lookupTableIdx],-1);
                         }

@@ -63,6 +63,7 @@ class CustomGBIntegral{
         float _lookupTableGridStep[3];
         int _lookupTableNumberOfGridPoints[3];
         bool _periodic;
+        bool _useLookupTable;
         OpenMM::Vec3 _periodicBoxVectors[3];
         CUfunction lookupTableKernel,integralKernel,reduceForceKernel;
         int counter;
