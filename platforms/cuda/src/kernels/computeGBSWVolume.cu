@@ -1,7 +1,7 @@
 //COMPUTE_VOLUME
 float sw = 0.03;
 float sw3 = sw*sw*sw;
-float deltaR_qj = sqrt(delta.x*delta.x + delta.y*delta.y + delta.z*delta.z);
+float deltaR_qj = sqrtf(delta.x*delta.x + delta.y*delta.y + delta.z*delta.z);
 float atomicRadii_j = (radius[atomJ]+0.03)*0.9520;
 float dr = deltaR_qj - atomicRadii_j;
 float dr3 = dr*dr*dr;

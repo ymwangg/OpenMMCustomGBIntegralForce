@@ -77,10 +77,11 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
     }
 
     {
+        //lookup table kernel
         switch(integralType){
             case CharmmGBMVForce::GBIntegralType::GBSWIntegral :
                 {
-                    _lookupTableSize = 25;
+                    _lookupTableSize = 32;
                     _lookupTableBufferLength = switchingDistance;
                     break;
                 }
@@ -131,6 +132,15 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
         printf("compiling lookupTable kernel\n");
         lookupTableKernel = cu.getKernel(module, "computeLookupTable");
     }
+    { //sort lookup table kernel
+        map<string, string> defines, macroDefines;
+        defines["LOOKUPTABLE_SIZE"] = cu.intToString(_lookupTableSize);
+        if(_useLookupTable)
+            macroDefines["USE_PERIODIC"] = "1";
+        cout<<cu.replaceStrings(CudaCharmmKernelSources::sortLookupTable,defines)<<endl;
+        CUmodule module = cu.createModule(cu.replaceStrings(CudaCharmmKernelSources::sortLookupTable,defines),macroDefines);
+        sortLookupTableKernel = cu.getKernel(module, "sortLookupTable"); 
+    }
     { // quadrature
         switch(integralType){
             case CharmmGBMVForce::GBIntegralType::GBSWIntegral :
@@ -163,7 +173,7 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
         int nRadialPoints = 24; 
 
         //rule of Lebedev quadrature for spherical integral
-        int ruleLebedev = 3; //3->38points 4->50points
+        int ruleLebedev = 3; //1->6points 2->14points 3->26points 4->38points 5->50points
         vector<vector<double> > radialQuad = CharmmQuadrature::GaussLegendre(_r0, _r1, nRadialPoints);
         vector<vector<double> > sphericalQuad = CharmmQuadrature::Lebedev(ruleLebedev);
         _numQuadPoints = radialQuad.size()*sphericalQuad.size();
@@ -377,7 +387,7 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
             case CharmmGBMVForce::GBIntegralType::GBSWIntegral :
                 { 
                     loadVolume << "float V = volume[atomI*NUM_QUADRATURE_POINTS + quadIdx];\n";
-                    loadVolume << "if(V==0) continue;\n"; 
+                    loadVolume << "if(V==0 || V==1) continue;\n"; 
                     break;
                 }
             case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI : 
@@ -389,11 +399,8 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
             case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII : 
                 {
                     beforeVolume << "float sum1 = presum1[atomI*NUM_QUADRATURE_POINTS + quadIdx];\n";
-                    beforeVolume << "if(sum1==0) continue;\n";
                     beforeVolume << "float sum2 = presum2[atomI*NUM_QUADRATURE_POINTS + quadIdx];\n";
-                    beforeVolume << "if(sum2==0) continue;\n";
                     beforeVolume << "float sum3 = presum3[atomI*NUM_QUADRATURE_POINTS + quadIdx];\n";
-                    beforeVolume << "if(sum3==1e-18) continue;\n";
                     beforeVolume << "float3 vector_sum = prevector[atomI*NUM_QUADRATURE_POINTS + quadIdx];\n";
                     beforeVolume << "float sum = S0 * sum1 * sum2 / (sum3*sum3);\n";
                     beforeVolume << "float tmp_presum = expf(BETA*(sum - LAMBDA));\n";
@@ -408,41 +415,65 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
                 " = quad_w" << cu.intToString(i) << "[quadIdx] * dEdI" <<
                 cu.intToString(i) << "[atomI];\n";
         }
+        beforeVolume << "float chain = 0.0";
+        for(int i=0; i<_numIntegrals; i++){
+            beforeVolume << " + chain" << cu.intToString(i);
+        }
+        beforeVolume << ";\n";
+
+        switch(integralType){
+            case CharmmGBMVForce::GBIntegralType::GBSWIntegral :
+                { 
+                    beforeVolume << "float factor = chain;\n";
+                    // usually 1e-2 is good enough and the force on each atom deviates less than 1%
+                    beforeVolume << "if(fabs(factor)<1e-3) continue;\n";
+                    //beforeVolume << "continue;\n";
+                    break;
+                }
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI : 
+                {
+                    beforeVolume << "factor = chain*factor;\n";
+                    beforeVolume << "if(fabs(factor)<1e-2) continue;\n";
+                    break;
+                }
+            case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII : 
+                {
+                    beforeVolume << "factor = chain*factor;\n";
+                    // usually 1e-2 is good enough and the force on each atom deviates less than 1%
+                    beforeVolume << "if(fabs(factor)<1e-2) continue;\n";
+                    break;
+                }
+
+        }
         switch(integralType){
             case CharmmGBMVForce::GBIntegralType::GBSWIntegral :
                 {
-                    for(int i=0; i<_numIntegrals; i++){
-                        applyChainRule << "forceI.x -= chain" << cu.intToString(i) <<" * dIdr * delta.x;\n";
-                        applyChainRule << "forceI.y -= chain" << cu.intToString(i) <<" * dIdr * delta.y;\n";
-                        applyChainRule << "forceI.z -= chain" << cu.intToString(i) <<" * dIdr * delta.z;\n";
-                        applyChainRule << "forceJ.x += chain" << cu.intToString(i) <<" * dIdr * delta.x;\n";
-                        applyChainRule << "forceJ.y += chain" << cu.intToString(i) <<" * dIdr * delta.y;\n";
-                        applyChainRule << "forceJ.z += chain" << cu.intToString(i) <<" * dIdr * delta.z;\n";
-                    }
+                    applyChainRule << "forceI.x -= factor * dIdr * delta.x;\n";
+                    applyChainRule << "forceI.y -= factor * dIdr * delta.y;\n";
+                    applyChainRule << "forceI.z -= factor * dIdr * delta.z;\n";
+                    applyChainRule << "forceJ.x += factor * dIdr * delta.x;\n";
+                    applyChainRule << "forceJ.y += factor * dIdr * delta.y;\n";
+                    applyChainRule << "forceJ.z += factor * dIdr * delta.z;\n";
                     break;
                 }
             case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeI :
                 {
-                    for(int i=0; i<_numIntegrals; i++){
-                        applyChainRule << "forceI.x -= chain" << cu.intToString(i) <<" * dIdr * delta.x;\n";
-                        applyChainRule << "forceI.y -= chain" << cu.intToString(i) <<" * dIdr * delta.y;\n";
-                        applyChainRule << "forceI.z -= chain" << cu.intToString(i) <<" * dIdr * delta.z;\n";
-                        applyChainRule << "forceJ.x += chain" << cu.intToString(i) <<" * dIdr * delta.x;\n";
-                        applyChainRule << "forceJ.y += chain" << cu.intToString(i) <<" * dIdr * delta.y;\n";
-                        applyChainRule << "forceJ.z += chain" << cu.intToString(i) <<" * dIdr * delta.z;\n";
-                    }
+                    applyChainRule << "forceI.x -= factor * dIdr * delta.x;\n";
+                    applyChainRule << "forceI.y -= factor * dIdr * delta.y;\n";
+                    applyChainRule << "forceI.z -= factor * dIdr * delta.z;\n";
+                    applyChainRule << "forceJ.x += factor * dIdr * delta.x;\n";
+                    applyChainRule << "forceJ.y += factor * dIdr * delta.y;\n";
+                    applyChainRule << "forceJ.z += factor * dIdr * delta.z;\n";
                     break;
                 }
             case CharmmGBMVForce::GBIntegralType::GBMVIntegralTypeII :
                 {
-                    for(int i=0; i<_numIntegrals; i++){
-                        applyChainRule << "forceI.x -= chain" << cu.intToString(i) <<" * dIdr_vec.x;\n";
-                        applyChainRule << "forceI.y -= chain" << cu.intToString(i) <<" * dIdr_vec.y;\n";
-                        applyChainRule << "forceI.z -= chain" << cu.intToString(i) <<" * dIdr_vec.z;\n";
-                        applyChainRule << "forceJ.x += chain" << cu.intToString(i) <<" * dIdr_vec.x;\n";
-                        applyChainRule << "forceJ.y += chain" << cu.intToString(i) <<" * dIdr_vec.y;\n";
-                        applyChainRule << "forceJ.z += chain" << cu.intToString(i) <<" * dIdr_vec.z;\n";
-                    }
+                    applyChainRule << "forceI.x -= factor * dIdr_vec.x;\n";
+                    applyChainRule << "forceI.y -= factor * dIdr_vec.y;\n";
+                    applyChainRule << "forceI.z -= factor * dIdr_vec.z;\n";
+                    applyChainRule << "forceJ.x += factor * dIdr_vec.x;\n";
+                    applyChainRule << "forceJ.y += factor * dIdr_vec.y;\n";
+                    applyChainRule << "forceJ.z += factor * dIdr_vec.z;\n";
                     break;
                 }
         }
@@ -503,6 +534,17 @@ CustomGBIntegral::CustomGBIntegral(CudaContext& cu, const System& system, const 
         lookupTableArgs.push_back(&_lookupTableBufferLength);
         lookupTableArgs.push_back(&_lookupTableSize);
     }
+    {
+        sortLookupTableArgs.push_back(&cu.getPosq().getDevicePointer());
+        sortLookupTableArgs.push_back(cu.getPeriodicBoxSizePointer());
+        sortLookupTableArgs.push_back(cu.getInvPeriodicBoxSizePointer());
+        sortLookupTableArgs.push_back(&d_lookupTable.getDevicePointer());
+        sortLookupTableArgs.push_back(&d_lookupTableNumAtoms.getDevicePointer());
+        sortLookupTableArgs.push_back(&d_lookupTableNumGridPoints.getDevicePointer());
+        sortLookupTableArgs.push_back(&d_lookupTableMinCoord.getDevicePointer());
+        sortLookupTableArgs.push_back(&d_lookupTableGridStep.getDevicePointer());
+    }
+
     {
         integralArgs.push_back(&cu.getPosq().getDevicePointer());
         integralArgs.push_back(cu.getPeriodicBoxSizePointer());
@@ -621,8 +663,11 @@ void CustomGBIntegral::computeLookupTable(){
         throw OpenMMException(str.str());
     }   
 
-    //not periodic
     cu.executeKernel(lookupTableKernel, &lookupTableArgs[0],cu.getPaddedNumAtoms());
+    int n_x = _lookupTableNumberOfGridPoints[0];
+    int n_y = _lookupTableNumberOfGridPoints[1];
+    int n_z = _lookupTableNumberOfGridPoints[2];
+    //cuLaunchKernel(sortLookupTableKernel, n_x, n_y, n_z, _lookupTableSize, 1, 1, 0, 0, &sortLookupTableArgs[0], NULL);
 }
 
 void CustomGBIntegral::evaluate(){

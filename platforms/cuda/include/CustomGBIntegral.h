@@ -52,7 +52,7 @@ class CustomGBIntegral{
         std::vector<CudaArray> d_quad_w;
         float _r0;
         float _r1;
-        std::vector<void*> lookupTableArgs, integralArgs, reduceForceArgs;
+        std::vector<void*> lookupTableArgs, sortLookupTableArgs, integralArgs, reduceForceArgs;
         int _lookupTableSize;
         int _numIntegrals;
         int _numQuadPoints;
@@ -65,7 +65,7 @@ class CustomGBIntegral{
         bool _periodic;
         bool _useLookupTable;
         OpenMM::Vec3 _periodicBoxVectors[3];
-        CUfunction lookupTableKernel,integralKernel,reduceForceKernel;
+        CUfunction lookupTableKernel,sortLookupTableKernel,integralKernel,reduceForceKernel;
         int counter;
 };
 }

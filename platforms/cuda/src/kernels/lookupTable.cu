@@ -25,12 +25,20 @@ extern "C" __global__ void computeLookupTable(const real4* __restrict__ posq, co
         //printf("%d-(%f,%f,%f)-(%f)\n",index,pos.x,pos.y,pos.z,vdwRadii);
         // sqrt(3)/2 = 0.8660254
         float paddingLength =  vdwRadii + sqrtf(3.0)/2*lookupTableGridLength + lookupTableBufferLength;
+        /*
         beginCoor.x = (pos.x - paddingLength - gridStep.x);
         endCoor.x = (pos.x + paddingLength + gridStep.x);
         beginCoor.y = (pos.y - paddingLength - gridStep.y);
         endCoor.y = (pos.y + paddingLength + gridStep.y);
         beginCoor.z = (pos.z - paddingLength - gridStep.z);
         endCoor.z = (pos.z + paddingLength + gridStep.z);
+        */
+        beginCoor.x = (pos.x - paddingLength);
+        endCoor.x = (pos.x + paddingLength);
+        beginCoor.y = (pos.y - paddingLength);
+        endCoor.y = (pos.y + paddingLength);
+        beginCoor.z = (pos.z - paddingLength);
+        endCoor.z = (pos.z + paddingLength);
         int s=0;
         for(float x = beginCoor.x; x < endCoor.x; x += gridStep.x){
             for(float y = beginCoor.y; y < endCoor.y; y += gridStep.y){
@@ -56,11 +64,13 @@ extern "C" __global__ void computeLookupTable(const real4* __restrict__ posq, co
                         int insertionIdx = atomicAdd(&lookupTableNumAtoms[lookupTableIdx],1);
                         if(insertionIdx < lookupTableSize){
                             int location = lookupTableIdx*lookupTableSize + insertionIdx;
+                            /*
                             if(location < 0) {
                                 printf("abnormal %d<-(%d,%d,%d)\n",location,lookupTableIdx,lookupTableSize,insertionIdx);
                                 printf("(%f,%f,%f)->(%f,%f,%f)->min(%f,%f,%f)(%d,%d,%d)\n",x,y,z,x0,y0,z0,minCoor.x,minCoor.y,minCoor.z,
                                         idx_x,idx_y,idx_z);
                             }
+                            */
                             lookupTable[location] = index;
                         }else{
                             insertionIdx = atomicAdd(&lookupTableNumAtoms[lookupTableIdx],-1);

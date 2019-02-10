@@ -18,6 +18,8 @@ PARAM_ARGS)
         int quadIdx = blockIdx.y*blockDim.x + threadIdx.x;
         LOAD_VOLUME
         if(quadIdx < NUM_QUADRATURE_POINTS){
+        BEFORE_VOLUME
+        //if(factor<0)printf("%f\n",factor);
         float4 quadPosR = make_float4(posI.x + quad[quadIdx].x, 
                 posI.y + quad[quadIdx].y, posI.z + quad[quadIdx].z, quad[quadIdx].w);
 #ifdef USE_PERIODIC
@@ -35,7 +37,6 @@ PARAM_ARGS)
                 (quadPosR.y - minCoor.y)/gridStep.y,
                 (quadPosR.z - minCoor.z)/gridStep.z);
 #endif
-        BEFORE_VOLUME
 #ifdef USE_LOOKUP_TABLE
         int lookupTableIdx = (lookupTableIdx3.x*(numGridPoints.y*numGridPoints.z) + 
                 lookupTableIdx3.y*numGridPoints.z + lookupTableIdx3.z);
@@ -56,18 +57,24 @@ PARAM_ARGS)
             APPLY_CHAIN_RULE
 
 
-            if(abs(forceJ.x)>1e-10) atomicAdd(&forceBuffers[atomJ], static_cast<unsigned long long>((long long) (forceJ.x*0x100000000)));
-            if(abs(forceJ.y)>1e-10) atomicAdd(&forceBuffers[atomJ+NUM_PADDED_ATOMS], static_cast<unsigned long long>((long long) (forceJ.y*0x100000000)));
-            if(abs(forceJ.z)>1e-10) atomicAdd(&forceBuffers[atomJ+NUM_PADDED_ATOMS*2], static_cast<unsigned long long>((long long) (forceJ.z*0x100000000)));
+            //if(abs(forceJ.x)>1e-10) 
+                atomicAdd(&forceBuffers[atomJ], static_cast<unsigned long long>((long long) (forceJ.x*0x100000000)));
+            //if(abs(forceJ.y)>1e-10) 
+                atomicAdd(&forceBuffers[atomJ+NUM_PADDED_ATOMS], static_cast<unsigned long long>((long long) (forceJ.y*0x100000000)));
+            //if(abs(forceJ.z)>1e-10) 
+                atomicAdd(&forceBuffers[atomJ+NUM_PADDED_ATOMS*2], static_cast<unsigned long long>((long long) (forceJ.z*0x100000000)));
         } // end atomJ
         /*
         float3 origin = make_float3(1/((real) 0x100000000) * (long long) forceBuffers[atomI] ,
                 1/((real) 0x100000000) * (long long)forceBuffers[atomI+NUM_PADDED_ATOMS],
                 1/((real) 0x100000000) * (long long)forceBuffers[atomI+NUM_PADDED_ATOMS*2]);
                 */
-        if(abs(forceI.x)>1e-10) atomicAdd(&forceBuffers[atomI], static_cast<unsigned long long>((long long) (forceI.x*0x100000000)));
-        if(abs(forceI.y)>1e-10) atomicAdd(&forceBuffers[atomI+NUM_PADDED_ATOMS], static_cast<unsigned long long>((long long) (forceI.y*0x100000000)));
-        if(abs(forceI.z)>1e-10) atomicAdd(&forceBuffers[atomI+NUM_PADDED_ATOMS*2], static_cast<unsigned long long>((long long) (forceI.z*0x100000000)));
+        //if(abs(forceI.x)>1e-10) 
+            atomicAdd(&forceBuffers[atomI], static_cast<unsigned long long>((long long) (forceI.x*0x100000000)));
+        //if(abs(forceI.y)>1e-10) 
+            atomicAdd(&forceBuffers[atomI+NUM_PADDED_ATOMS], static_cast<unsigned long long>((long long) (forceI.y*0x100000000)));
+        //if(abs(forceI.z)>1e-10) 
+            atomicAdd(&forceBuffers[atomI+NUM_PADDED_ATOMS*2], static_cast<unsigned long long>((long long) (forceI.z*0x100000000)));
         /*
         float3 end = make_float3(1/((real) 0x100000000) * (long long) forceBuffers[atomI] ,
                 1/((real) 0x100000000) * (long long)forceBuffers[atomI+NUM_PADDED_ATOMS],

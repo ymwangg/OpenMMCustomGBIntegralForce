@@ -5,3 +5,4 @@ float atomicRadii_j = radius[atomJ];
 float atomicRadii_j4 = atomicRadii_j*atomicRadii_j*atomicRadii_j*atomicRadii_j;
 float gammaj = GAMMA * logf(LAMBDA) / (atomicRadii_j4);
 sum += expf(gammaj * deltaR4);
+if(sum>0.3) break;
